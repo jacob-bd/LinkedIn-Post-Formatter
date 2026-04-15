@@ -2,7 +2,7 @@
 // Tracks editors and manages formatting functionality
 
 // Debug mode - set to false for production to prevent logging user content
-const DEBUG = false;
+const DEBUG = true; // TEMP: enabled for debugging toolbar issues
 const log = DEBUG ? console.log.bind(console) : () => {};
 const logError = console.error.bind(console); // Always log errors
 
@@ -17,6 +17,18 @@ function injectToolbarStyles() {
         /* Keep buttons inline without forcing new line */
         .linkedin-formatter-buttons {
             margin-right: 8px !important;
+        }
+        /* Floating overlay container - positioned above native toolbar in modals */
+        .linkedin-formatter-overlay {
+            position: fixed;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            padding: 4px 12px;
+            background: #ffffff;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+            box-sizing: border-box;
+            pointer-events: auto;
         }
         /* Ensure toolbar footer uses flexbox with space-between for left/right alignment */
         .linkedin-formatter-footer-container {
@@ -801,16 +813,17 @@ function createFormattingButtons() {
             btn.style.backgroundColor = 'transparent';
         };
 
+        // Prevent focus stealing on all buttons
+        btn.onmousedown = (e) => {
+            e.preventDefault();
+            // Save selection in case we need it later (especially for dropdown)
+            saveSelection();
+        };
+
         // Handle dropdown button specially
         if (button.isDropdown) {
             const dropdown = createFontDropdown();
             container.appendChild(dropdown);
-
-            btn.onmousedown = (e) => {
-                // Save selection before button click causes it to be lost
-                e.preventDefault();
-                saveSelection();
-            };
 
             btn.onclick = (e) => {
                 e.preventDefault();
@@ -833,6 +846,13 @@ function createFormattingButtons() {
                 e.preventDefault();
                 e.stopPropagation();
                 log(`Button clicked: ${button.action}`);
+                
+                // If selection was lost despite preventDefault, restore it
+                const selection = window.getSelection();
+                if (!selection.rangeCount && state.savedSelection) {
+                    restoreSelection();
+                }
+                
                 formatText(button.action);
                 trackUsage(button.action);
             };
@@ -871,9 +891,30 @@ function formatText(action) {
             return;
         }
 
-        const range = selection.getRangeAt(0);
-        let selectedText = range.toString();
+        log(`Selection rangeCount: ${selection.rangeCount}`);
 
+        // Find the best range (some editors return empty ranges at index 0)
+        let range = selection.getRangeAt(0);
+        for (let i = 0; i < selection.rangeCount; i++) {
+            const r = selection.getRangeAt(i);
+            log(`Range ${i} length: ${r.toString().length}`);
+            if (r.toString().length > 0) {
+                range = r;
+                break;
+            }
+        }
+
+        let selectedText = range.toString();
+        const rangeIsEmpty = selectedText.length === 0;
+
+        // If the range is empty, try to get text from the global selection
+        // (LinkedIn's main post modal has a bug where range is empty but selection exists)
+        if (rangeIsEmpty && selection.toString().length > 0) {
+            selectedText = selection.toString();
+            log('Using global selection text (range was empty):', selectedText.length);
+        }
+
+        // For non-bullet actions, we need selected text
         if (selectedText.length === 0 && action !== 'bullet') {
             log('No text selected for formatting');
             return;
@@ -881,145 +922,32 @@ function formatText(action) {
 
         let formattedText = '';
 
+        // === UNICODE FORMAT ACTIONS (bold, italic, etc.) ===
         if (action === 'bold' || action === 'italic' || action === 'boldItalic' ||
             action === 'monospace' || action === 'strikethrough' || action === 'underline' ||
             action === 'sansSerif' || action === 'script' || action === 'circled' ||
             action === 'negativeCircled' || action === 'squared' || action === 'fullwidth') {
-            // Check if the specific format is already applied (for toggle behavior)
             const alreadyFormatted = isFormatted(selectedText, action);
-            
-            // Always clear all formatting first to prevent conflicts between different formats
-            // This ensures clean state before applying new format
             let plainText = clearFormatting(selectedText);
-            
+
             if (alreadyFormatted) {
-                // Toggle off: format was already applied, so just return plain text
                 formattedText = plainText;
                 log('Removing formatting (toggle off):', action);
             } else {
-                // Toggle on: apply the new format to plain text
                 formattedText = convertToUnicode(plainText, action);
                 log('Adding formatting:', action);
             }
+
+        // === BULLET ACTION ===
         } else if (action === 'bullet') {
-            // For bullet points, we need to handle the DOM structure directly
-            // LinkedIn uses contenteditable with div/br elements, not \n characters
+            formattedText = processBullets(selectedText, range, rangeIsEmpty);
 
-            // Get all text nodes and block elements in the selection
-            const container = range.commonAncestorContainer;
-            const editor = container.nodeType === Node.TEXT_NODE ? container.parentElement : container;
-
-            // Find all block-level elements (divs, paragraphs) within the selection
-            let blocks = [];
-
-            if (range.startContainer === range.endContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
-                // Single line selection - just add bullet to this line
-                const text = selectedText.trim();
-                if (text.startsWith('• ')) {
-                    formattedText = text.slice(2);
-                } else if (text.startsWith('•')) {
-                    formattedText = text.slice(1).trim();
-                } else {
-                    formattedText = '• ' + text;
-                }
-            } else {
-                // Multi-line selection - split by actual line breaks
-                // In contenteditable, check for <br> or new block elements
-                const tempDiv = document.createElement('div');
-                const clonedContents = range.cloneContents();
-                tempDiv.appendChild(clonedContents);
-
-                // Get text with preserved line breaks
-                const htmlContent = tempDiv.innerHTML;
-                // Replace <br>, </div>, </p> with newlines
-                const textWithBreaks = htmlContent
-                    .replace(/<br\s*\/?>/gi, '\n')
-                    .replace(/<\/div>/gi, '\n')
-                    .replace(/<\/p>/gi, '\n')
-                    .replace(/<[^>]+>/g, '') // Remove other HTML tags
-                    .trim();
-
-                const lines = textWithBreaks.split('\n').filter(line => line.trim());
-
-                if (lines.length === 0) {
-                    formattedText = '• ' + selectedText;
-                } else {
-                    const allHaveBullets = lines.every(line => line.trim().startsWith('•'));
-
-                    if (allHaveBullets) {
-                        // Remove bullets
-                        formattedText = lines.map(line => {
-                            const trimmed = line.trim();
-                            if (trimmed.startsWith('• ')) return trimmed.slice(2);
-                            if (trimmed.startsWith('•')) return trimmed.slice(1).trim();
-                            return trimmed;
-                        }).join('\n');
-                    } else {
-                        // Add bullets
-                        formattedText = lines.map(line => {
-                            const trimmed = line.trim();
-                            if (!trimmed) return '';
-                            if (trimmed.startsWith('•')) return trimmed;
-                            return '• ' + trimmed;
-                        }).join('\n');
-                    }
-                }
-            }
+        // === NUMBERED LIST ACTION ===
         } else if (action === 'numbered') {
-            // For numbered lists, handle DOM structure like bullets
-            const container = range.commonAncestorContainer;
-            const editor = container.nodeType === Node.TEXT_NODE ? container.parentElement : container;
+            formattedText = processNumberedList(selectedText, range, rangeIsEmpty);
 
-            if (range.startContainer === range.endContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
-                // Single line selection
-                const text = selectedText.trim();
-                // Check if it starts with a number pattern like "1. " or "1) "
-                if (/^\d+[\.\)]\s/.test(text)) {
-                    // Remove numbering
-                    formattedText = text.replace(/^\d+[\.\)]\s+/, '');
-                } else {
-                    formattedText = '1. ' + text;
-                }
-            } else {
-                // Multi-line selection
-                const tempDiv = document.createElement('div');
-                const clonedContents = range.cloneContents();
-                tempDiv.appendChild(clonedContents);
-
-                const htmlContent = tempDiv.innerHTML;
-                const textWithBreaks = htmlContent
-                    .replace(/<br\s*\/?>/gi, '\n')
-                    .replace(/<\/div>/gi, '\n')
-                    .replace(/<\/p>/gi, '\n')
-                    .replace(/<[^>]+>/g, '')
-                    .trim();
-
-                const lines = textWithBreaks.split('\n').filter(line => line.trim());
-
-                if (lines.length === 0) {
-                    formattedText = '1. ' + selectedText;
-                } else {
-                    const allHaveNumbers = lines.every(line => /^\d+[\.\)]\s/.test(line.trim()));
-
-                    if (allHaveNumbers) {
-                        // Remove numbering
-                        formattedText = lines.map(line => {
-                            return line.trim().replace(/^\d+[\.\)]\s+/, '');
-                        }).join('\n');
-                    } else {
-                        // Add numbering
-                        formattedText = lines.map((line, index) => {
-                            const trimmed = line.trim();
-                            if (!trimmed) return '';
-                            // Don't re-number if already numbered
-                            if (/^\d+[\.\)]\s/.test(trimmed)) return trimmed;
-                            return `${index + 1}. ${trimmed}`;
-                        }).join('\n');
-                    }
-                }
-            }
+        // === CLEAR FORMATTING ===
         } else if (action === 'clear') {
-            // Clear all formatting
             log('Clearing formatting from text length:', selectedText?.length || 0);
             formattedText = clearFormatting(selectedText);
             log('Cleared result length:', formattedText?.length || 0);
@@ -1030,49 +958,64 @@ function formatText(action) {
             return;
         }
 
-        // Save the start container and offset before deleting
-        const startContainer = range.startContainer;
-        const startOffset = range.startOffset;
+        // === TEXT REPLACEMENT ===
+        const rangeHasContent = range.toString().length > 0;
+        log(`Range has content: ${rangeHasContent}, formattedText length: ${formattedText.length}`);
 
-        // Delete the selected content
-        range.deleteContents();
+        if (rangeHasContent) {
+            // PRIMARY PATH: Range-based replacement (works for comments)
+            log('Using range-based replacement');
+            range.deleteContents();
+            const textNode = document.createTextNode(formattedText);
+            range.insertNode(textNode);
 
-        // Create text node with formatted text
-        const textNode = document.createTextNode(formattedText);
+            const newRange = document.createRange();
+            newRange.setStart(textNode, formattedText.length);
+            newRange.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+        } else {
+            // FALLBACK PATH: execCommand-based replacement
+            // Handles LinkedIn's main post modal where range is empty
+            log('Using execCommand fallback (range was empty but selection exists)');
 
-        // Insert the node
-        range.insertNode(textNode);
+            const editorEl = state.currentEditor || document.activeElement;
+            if (editorEl && editorEl.isContentEditable) {
+                editorEl.focus();
+            }
 
-        // Create new range and collapse it after the inserted text
-        const newRange = document.createRange();
-        newRange.setStart(textNode, formattedText.length);
-        newRange.collapse(true);
+            const success = document.execCommand('insertText', false, formattedText);
+            log(`execCommand insertText result: ${success}`);
 
-        // Clear selection and add new range
-        selection.removeAllRanges();
-        selection.addRange(newRange);
+            if (!success) {
+                log('execCommand failed, trying synthetic input events');
+                const editorEl2 = state.currentEditor || document.activeElement;
+                if (editorEl2 && editorEl2.isContentEditable) {
+                    editorEl2.dispatchEvent(new InputEvent('beforeinput', {
+                        bubbles: true, cancelable: true,
+                        inputType: 'insertText', data: formattedText
+                    }));
+                    editorEl2.dispatchEvent(new InputEvent('input', {
+                        bubbles: true, cancelable: false,
+                        inputType: 'insertText', data: formattedText
+                    }));
+                }
+            }
+        }
 
-        // Trigger multiple events for better LinkedIn compatibility
+        // Trigger change events for LinkedIn compatibility
         const editor = state.currentEditor || document.activeElement;
         if (editor && editor.isContentEditable) {
-            // Use setTimeout to ensure DOM has updated
             setTimeout(() => {
                 const events = [
                     new InputEvent('input', {
-                        bubbles: true,
-                        cancelable: false,
-                        inputType: 'insertText',
-                        data: formattedText
+                        bubbles: true, cancelable: false,
+                        inputType: 'insertText', data: formattedText
                     }),
                     new Event('change', { bubbles: true })
                 ];
-
                 events.forEach(event => {
-                    try {
-                        editor.dispatchEvent(event);
-                    } catch (e) {
-                        log('Event dispatch error:', e);
-                    }
+                    try { editor.dispatchEvent(event); } catch (e) { log('Event dispatch error:', e); }
                 });
             }, 0);
         }
@@ -1083,7 +1026,139 @@ function formatText(action) {
     }
 }
 
-// Find post editor with multiple strategies
+// Helper: Process bullet formatting
+function processBullets(selectedText, range, rangeIsEmpty) {
+    if (rangeIsEmpty) {
+        // String-based approach (main post modal with broken ranges)
+        log('Bullet: using string-based fallback');
+        const lines = selectedText.split('\n').filter(line => line.trim());
+
+        if (lines.length === 0) return '• ';
+
+        if (lines.length === 1) {
+            const text = lines[0].trim();
+            if (text.startsWith('• ')) return text.slice(2);
+            if (text.startsWith('•')) return text.slice(1).trim();
+            return '• ' + text;
+        }
+
+        const allHaveBullets = lines.every(line => line.trim().startsWith('•'));
+        if (allHaveBullets) {
+            return lines.map(line => {
+                const t = line.trim();
+                if (t.startsWith('• ')) return t.slice(2);
+                if (t.startsWith('•')) return t.slice(1).trim();
+                return t;
+            }).join('\n');
+        }
+        return lines.map(line => {
+            const t = line.trim();
+            if (!t) return '';
+            if (t.startsWith('•')) return t;
+            return '• ' + t;
+        }).join('\n');
+    }
+
+    // Range-based approach (comments with working ranges)
+    if (range.startContainer === range.endContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
+        const text = selectedText.trim();
+        if (text.startsWith('• ')) return text.slice(2);
+        if (text.startsWith('•')) return text.slice(1).trim();
+        return '• ' + text;
+    }
+
+    // Multi-line via range cloning
+    const tempDiv = document.createElement('div');
+    tempDiv.appendChild(range.cloneContents());
+    const textWithBreaks = tempDiv.innerHTML
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+    const lines = textWithBreaks.split('\n').filter(line => line.trim());
+
+    if (lines.length === 0) return '• ' + selectedText;
+
+    const allHaveBullets = lines.every(line => line.trim().startsWith('•'));
+    if (allHaveBullets) {
+        return lines.map(line => {
+            const t = line.trim();
+            if (t.startsWith('• ')) return t.slice(2);
+            if (t.startsWith('•')) return t.slice(1).trim();
+            return t;
+        }).join('\n');
+    }
+    return lines.map(line => {
+        const t = line.trim();
+        if (!t) return '';
+        if (t.startsWith('•')) return t;
+        return '• ' + t;
+    }).join('\n');
+}
+
+// Helper: Process numbered list formatting
+function processNumberedList(selectedText, range, rangeIsEmpty) {
+    const numPattern = /^\d+[.)]\s/;
+
+    if (rangeIsEmpty) {
+        // String-based approach (main post modal with broken ranges)
+        log('Numbered: using string-based fallback');
+        const lines = selectedText.split('\n').filter(line => line.trim());
+
+        if (lines.length === 0) return '1. ';
+
+        if (lines.length === 1) {
+            const text = lines[0].trim();
+            if (numPattern.test(text)) return text.replace(/^\d+[.)]\s+/, '');
+            return '1. ' + text;
+        }
+
+        const allHaveNumbers = lines.every(line => numPattern.test(line.trim()));
+        if (allHaveNumbers) {
+            return lines.map(line => line.trim().replace(/^\d+[.)]\s+/, '')).join('\n');
+        }
+        return lines.map((line, i) => {
+            const t = line.trim();
+            if (!t) return '';
+            if (numPattern.test(t)) return t;
+            return `${i + 1}. ${t}`;
+        }).join('\n');
+    }
+
+    // Range-based approach (comments with working ranges)
+    if (range.startContainer === range.endContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
+        const text = selectedText.trim();
+        if (numPattern.test(text)) return text.replace(/^\d+[.)]\s+/, '');
+        return '1. ' + text;
+    }
+
+    // Multi-line via range cloning
+    const tempDiv = document.createElement('div');
+    tempDiv.appendChild(range.cloneContents());
+    const textWithBreaks = tempDiv.innerHTML
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+    const lines = textWithBreaks.split('\n').filter(line => line.trim());
+
+    if (lines.length === 0) return '1. ' + selectedText;
+
+    const allHaveNumbers = lines.every(line => numPattern.test(line.trim()));
+    if (allHaveNumbers) {
+        return lines.map(line => line.trim().replace(/^\d+[.)]\s+/, '')).join('\n');
+    }
+    return lines.map((line, i) => {
+        const t = line.trim();
+        if (!t) return '';
+        if (numPattern.test(t)) return t;
+        return `${i + 1}. ${t}`;
+    }).join('\n');
+}
+
+// Find post editor with multiple strategies, piercing Shadow DOMs
 function findPostEditor() {
     const selectors = [
         '[contenteditable="true"][role="textbox"]',
@@ -1091,11 +1166,33 @@ function findPostEditor() {
         '[contenteditable="true"]'
     ];
 
+    // Helper to search through light DOM and all open shadow DOMs
+    function queryDeepAll(selector) {
+        const results = [];
+        const queue = [document];
+        
+        while (queue.length > 0) {
+            const root = queue.shift();
+            results.push(...root.querySelectorAll(selector));
+            
+            const allElements = root.querySelectorAll('*');
+            for (let i = 0; i < allElements.length; i++) {
+                if (allElements[i].shadowRoot) {
+                    queue.push(allElements[i].shadowRoot);
+                }
+            }
+        }
+        return results;
+    }
+
     for (const selector of selectors) {
-        const elements = document.querySelectorAll(selector);
+        const elements = queryDeepAll(selector);
         for (const element of elements) {
-            // Check if element is visible
-            if (element.offsetParent !== null && element.isContentEditable) {
+            // Check if element is visible (offsetParent fails in shadow DOM sometimes)
+            const rect = element.getBoundingClientRect();
+            const isVisible = rect.width > 0 && rect.height > 0;
+            
+            if (isVisible && element.isContentEditable) {
                 // Skip if already has a formatter attached
                 if (state.editors.has(element)) {
                     continue;
@@ -1111,96 +1208,39 @@ function findPostEditor() {
 function isPostContext(element) {
     if (!element.isContentEditable) return false;
 
-    // Just check if it's visible and editable - be more lenient
-    return element.offsetParent !== null;
+    // Just check if it's visible and editable
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
 }
 
-// Find LinkedIn's bottom toolbar - works for posts, comments, and replies
+// Find LinkedIn's bottom toolbar
 function findLinkedInToolbar(editor) {
     log('Finding toolbar for editor:', editor);
 
-    // First determine if this is a main post or a comment
-    const isMainPost = editor.closest('[role="dialog"]') ||
-                       editor.getAttribute('placeholder')?.includes('talk about') ||
-                       editor.getAttribute('aria-label')?.includes('post');
-
-    log('Context:', isMainPost ? 'MAIN POST' : 'COMMENT/REPLY');
-
-    let searchContainer = editor;
-
-    // Go up several levels to find a reasonable search scope
-    for (let i = 0; i < 10; i++) {
-        if (searchContainer.parentElement) {
-            searchContainer = searchContainer.parentElement;
+    // Use getRootNode() to search the entire shadow root (or document)
+    // This handles the new shadow DOM structure flawlessly.
+    const rootSearchTarget = editor.getRootNode();
+    
+    let localSearchContainer = editor;
+    for (let i = 0; i < 15; i++) {
+        if (localSearchContainer.parentElement) {
+            localSearchContainer = localSearchContainer.parentElement;
         }
     }
 
-    // SPECIAL HANDLING FOR MAIN POSTS - Find the Post button footer
-    if (isMainPost) {
-        log('Main post detected - looking for Post button footer');
+    log('Looking for emoji button');
 
-        // Find the Post button
-        const allButtons = searchContainer.querySelectorAll('button');
-        let postButton = null;
-
-        for (const btn of allButtons) {
-            const text = btn.textContent?.trim();
-            const ariaLabel = btn.getAttribute('aria-label');
-
-            if (text === 'Post' ||
-                ariaLabel?.includes('Post') ||
-                btn.className?.includes('share-actions__primary') ||
-                btn.className?.includes('primary-action')) {
-                postButton = btn;
-                log('Found Post button:', text);
-                break;
-            }
-        }
-
-        if (postButton) {
-            // Find the footer container that has the Post button
-            let footer = postButton.parentElement;
-
-            // Go up to find the actual footer container
-            while (footer && !footer.className?.includes('footer') &&
-                   !footer.className?.includes('share-box__bottom') &&
-                   !footer.className?.includes('share-actions')) {
-                footer = footer.parentElement;
-            }
-
-            if (footer) {
-                log('Found footer with Post button:', footer.className);
-
-                // Find or create a container for our buttons in the footer
-                // Look for child divs that might contain action buttons
-                const childDivs = footer.querySelectorAll('div');
-
-                for (const div of childDivs) {
-                    // Skip if this div contains the Post button
-                    if (div.contains(postButton)) {
-                        continue;
-                    }
-
-                    // Check if this div has buttons (likely the action area)
-                    const hasButtons = div.querySelector('button');
-                    if (hasButtons) {
-                        log('✅ Found action button area in footer');
-                        return div;
-                    }
-                }
-
-                // If no action area found, use the footer itself
-                log('✅ Using footer container for main post');
-                return footer;
-            }
-        }
-    }
-
-    // FOR COMMENTS AND REPLIES - Use the emoji button parent (KEEP AS IS - IT'S WORKING!)
-    log('Looking for emoji button for comment/reply');
-
-    // Try multiple emoji button selectors
-    const emojiSelectors = [
+    // Prioritize bottom toolbar buttons (Schedule/Clock) so the formatter appears at the very bottom
+    // Fall back to media/emoji for comments which don't have a schedule button
+    const targetSelectors = [
+        // 1. Bottom row with Post button
+        'button[aria-label*="schedule" i]',
+        'button[aria-label*="Schedule" i]',
+        // 2. Middle row / Comment toolbars
+        'button[aria-label*="photo" i]',
+        'button[aria-label*="image" i]',
+        'button[aria-label*="Add a" i]',
+        'button[aria-label*="Media" i]',
         'button[aria-label*="emoji" i]',
         'button[aria-label*="Emoji" i]',
         'button[aria-label*="Open emoji" i]',
@@ -1208,30 +1248,47 @@ function findLinkedInToolbar(editor) {
         'button[aria-label*="Insert an emoji" i]'
     ];
 
-    let emojiButton = null;
-    for (const selector of emojiSelectors) {
-        emojiButton = searchContainer.querySelector(selector);
-        if (emojiButton) {
-            log(`Found emoji button with selector: ${selector}`);
+    let foundButton = null;
+    let selectorUsed = '';
+    for (const selector of targetSelectors) {
+        // Try shadow root first, then fallback to local container
+        foundButton = (rootSearchTarget.querySelector && rootSearchTarget.querySelector(selector)) || localSearchContainer.querySelector(selector);
+        if (foundButton) {
+            log(`Found native toolbar button with selector: ${selector}`);
+            selectorUsed = selector;
             break;
         }
     }
 
-    if (emojiButton) {
-        const toolbar = emojiButton.parentElement;
-        log('✅ Using emoji button parent as toolbar (comment/reply)');
+    if (foundButton) {
+        let toolbar = foundButton.parentElement;
+        log(`✅ Using native button parent as toolbar (from: ${selectorUsed})`);
+        
+        let isBottomRow = selectorUsed.toLowerCase().includes('schedule');
+        
+        // If it's the bottom row, we want to find the full-width footer container
+        // so we can insert the formatting buttons on the far left.
+        if (isBottomRow) {
+            // Traverse up until we find a container that is nearly the full width of the modal
+            // The schedule button is usually in a small right-aligned wrapper.
+            let current = toolbar;
+            for (let i = 0; i < 5; i++) {
+                if (current && current.parentElement && current.parentElement.offsetWidth > 300) {
+                    current = current.parentElement;
+                    break;
+                }
+                if (current.parentElement) {
+                    current = current.parentElement;
+                }
+            }
+            toolbar = current;
+        }
+        
+        toolbar._isBottomRow = isBottomRow;
+        toolbar._formatterInsertionNode = isBottomRow ? toolbar.firstChild : foundButton;
         return toolbar;
     }
 
-    // Fallback: Look for image/photo button
-    const imageButton = searchContainer.querySelector('button[aria-label*="photo" i], button[aria-label*="image" i], button[aria-label*="Add a" i]');
-
-    if (imageButton) {
-        log('Found image button as fallback:', imageButton.getAttribute('aria-label'));
-        const toolbar = imageButton.parentElement;
-        log('✅ Using image button parent as toolbar');
-        return toolbar;
-    }
 
     console.warn('❌ Could not find toolbar for editor');
     return null;
@@ -1252,14 +1309,15 @@ function attachFormatter(editor) {
     state.editors.add(editor);
     state.currentEditor = editor;
 
-    // Remove any existing formatter buttons to prevent duplicates
-    const existingButtons = document.querySelectorAll('.linkedin-formatter-buttons');
-    if (existingButtons.length > 0) {
-        log('Removing', existingButtons.length, 'existing button sets');
-        existingButtons.forEach(btn => btn.remove());
+    // Clean up any old instance specifically for this editor just in case
+    if (state.formattingBars.has(editor)) {
+        const oldBar = state.formattingBars.get(editor);
+        if (oldBar && oldBar.isConnected) {
+            oldBar.remove();
+        }
     }
 
-    // Find LinkedIn's bottom toolbar
+    // Find LinkedIn's native toolbar (read-only positional reference for modals)
     const toolbar = findLinkedInToolbar(editor);
     if (!toolbar) {
         console.warn('❌ Could not find LinkedIn toolbar - buttons will not be added');
@@ -1274,194 +1332,58 @@ function attachFormatter(editor) {
     const formattingButtons = createFormattingButtons();
     state.formattingBars.set(editor, formattingButtons);
 
-    // Determine if this is a main post for special insertion logic
-    const isMainPost = editor.closest('[role="dialog"]') ||
-                       editor.getAttribute('placeholder')?.includes('talk about') ||
-                       editor.getAttribute('aria-label')?.includes('post');
+    // Determine if this is a modal editor (main post) or inline (comment/reply)
+    const isModalEditor = !!editor.closest('[role="dialog"]');
+    log('Is modal editor:', isModalEditor);
 
-    // For main posts, restructure to align formatting buttons left with Post button on right
-    if (isMainPost) {
-        // Find the Post button - search in toolbar and its siblings
-        let postButton = null;
-        let footerContainer = toolbar.parentElement;
+    // === DIRECT INSERTION for all editors ===
+    // We insert directly into the toolbar to keep it inline with native buttons.
+
+    if (toolbar._isBottomRow) {
+        // We found the full width footer. We want our buttons on the far left, and the native Post button on the far right.
+        toolbar.style.setProperty('display', 'flex', 'important');
+        toolbar.style.setProperty('justify-content', 'space-between', 'important');
+        toolbar.style.setProperty('width', '100%', 'important');
         
-        // Search for Post button in toolbar first
-        const toolbarButtons = toolbar.querySelectorAll('button');
-        for (const btn of toolbarButtons) {
-            const text = btn.textContent?.trim();
-            const ariaLabel = btn.getAttribute('aria-label');
-            // Expanded search for Post button - handles Groups and main feed
-            if (text === 'Post' || text === 'Share' || 
-                ariaLabel?.includes('Post') || ariaLabel?.includes('Share') ||
-                btn.className?.includes('share-actions__primary') ||
-                btn.className?.includes('primary-action') ||
-                btn.className?.includes('share-box__submit') ||
-                btn.getAttribute('type') === 'submit') {
-                postButton = btn;
-                break;
-            }
-        }
-
-        // If not found in toolbar, search more broadly in parent containers and siblings
-        // Groups may have the Post button further up in the DOM tree
-        if (!postButton) {
-            let searchContainer = toolbar.parentElement;
-            // Increased search depth for Groups
-            for (let i = 0; i < 8 && searchContainer && searchContainer !== document.body; i++) {
-                const allButtons = searchContainer.querySelectorAll('button');
-                for (const btn of allButtons) {
-                    const text = btn.textContent?.trim();
-                    const ariaLabel = btn.getAttribute('aria-label');
-                    // Expanded search for Post button - handles Groups and main feed
-                    if (text === 'Post' || text === 'Share' ||
-                        ariaLabel?.includes('Post') || ariaLabel?.includes('Share') ||
-                        btn.className?.includes('share-actions__primary') ||
-                        btn.className?.includes('primary-action') ||
-                        btn.className?.includes('share-box__submit') ||
-                        btn.getAttribute('type') === 'submit') {
-                        postButton = btn;
-                        footerContainer = searchContainer;
-                        break;
-                    }
-                }
-                if (postButton) break;
-                searchContainer = searchContainer.parentElement;
-            }
-        }
+        // LinkedIn's footer layout might use `row` or `row-reverse`.
+        // To guarantee it appears on the visual left with `space-between`, we must place it:
+        // - as the FIRST child if `row`
+        // - as the LAST child if `row-reverse`
+        const isRowReverse = window.getComputedStyle(toolbar).flexDirection === 'row-reverse';
         
-        // Additional search: look for submit buttons near the toolbar (Groups often use form submissions)
-        if (!postButton) {
-            const form = toolbar.closest('form');
-            if (form) {
-                const submitButtons = form.querySelectorAll('button[type="submit"], button:not([type])');
-                for (const btn of submitButtons) {
-                    const text = btn.textContent?.trim();
-                    const ariaLabel = btn.getAttribute('aria-label');
-                    if (text === 'Post' || text === 'Share' ||
-                        ariaLabel?.includes('Post') || ariaLabel?.includes('Share')) {
-                        postButton = btn;
-                        // Find the footer container - could be form or a parent div
-                        footerContainer = btn.closest('.share-box, .share-creation-state, [class*="share"], form') || btn.parentElement;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (postButton && footerContainer && footerContainer !== document.body) {
-            // Ensure footer container uses flexbox with space-between (use setProperty for !important)
-            footerContainer.classList.add('linkedin-formatter-footer-container');
-            footerContainer.style.setProperty('display', 'flex', 'important');
-            footerContainer.style.setProperty('justify-content', 'space-between', 'important');
-            footerContainer.style.setProperty('align-items', 'center', 'important');
-            footerContainer.style.setProperty('width', '100%', 'important');
-
-            // Check if we've already created sections (cache query results)
-            let leftSection = footerContainer.querySelector('.linkedin-formatter-left-section');
-            let rightSection = footerContainer.querySelector('.linkedin-formatter-right-section');
-
-            if (!leftSection || !rightSection) {
-                // First time setup - restructure the footer
-                // Create left section for formatting buttons and existing toolbar items
-                leftSection = document.createElement('div');
-                leftSection.className = 'linkedin-formatter-left-section';
-                leftSection.style.display = 'flex';
-                leftSection.style.alignItems = 'center';
-                leftSection.style.flex = '1';
-
-                // Create right section for Post button
-                rightSection = document.createElement('div');
-                rightSection.className = 'linkedin-formatter-right-section';
-                rightSection.style.display = 'flex';
-                rightSection.style.alignItems = 'center';
-
-                // Collect all direct children of footerContainer to reorganize
-                const footerChildren = Array.from(footerContainer.children);
-                
-                // Move toolbar and other non-Post elements to left section
-                footerChildren.forEach(child => {
-                    if (child.contains(postButton)) {
-                        // This child contains Post button, move to right section
-                        footerContainer.removeChild(child);
-                        rightSection.appendChild(child);
-                    } else if (child === toolbar || child.contains(toolbar)) {
-                        // This is the toolbar or contains toolbar, move to left section
-                        footerContainer.removeChild(child);
-                        // Ensure toolbar aligns to the left within leftSection (use setProperty for !important)
-                        if (child === toolbar) {
-                            toolbar.style.setProperty('justify-content', 'flex-start', 'important');
-                            toolbar.style.setProperty('display', 'flex', 'important');
-                        } else if (child.contains(toolbar)) {
-                            // Toolbar is nested, style the container
-                            child.style.setProperty('justify-content', 'flex-start', 'important');
-                            child.style.setProperty('display', 'flex', 'important');
-                        }
-                        leftSection.appendChild(child);
-                    } else if (!child.classList.contains('linkedin-formatter-left-section') &&
-                               !child.classList.contains('linkedin-formatter-right-section')) {
-                        // Other elements go to left section
-                        footerContainer.removeChild(child);
-                        leftSection.appendChild(child);
-                    }
-                });
-
-                // Add sections to footer
-                footerContainer.appendChild(leftSection);
-                footerContainer.appendChild(rightSection);
-            } else {
-                // Sections already exist, ensure they're still properly styled
-                leftSection.style.display = 'flex';
-                leftSection.style.alignItems = 'center';
-                leftSection.style.flex = '1';
-                rightSection.style.display = 'flex';
-                rightSection.style.alignItems = 'center';
-            }
-            // Reuse cached leftSection and rightSection variables (no need to re-query)
-
-            // Insert formatting buttons into the toolbar (which should be in leftSection)
-            // The toolbar reference is still valid
-            if (leftSection && leftSection.contains(toolbar)) {
-                // Ensure toolbar aligns content to the left (use setProperty for !important)
-                toolbar.style.setProperty('justify-content', 'flex-start', 'important');
-                toolbar.style.setProperty('display', 'flex', 'important');
-                toolbar.insertBefore(formattingButtons, toolbar.firstChild);
-            } else if (leftSection) {
-                // Toolbar might be nested, find it or insert at start of left section
-                const nestedToolbar = leftSection.contains(toolbar) ? toolbar : leftSection.querySelector('div') || leftSection;
-                if (nestedToolbar === toolbar) {
-                    toolbar.style.setProperty('justify-content', 'flex-start', 'important');
-                    toolbar.style.setProperty('display', 'flex', 'important');
-                }
-                nestedToolbar.insertBefore(formattingButtons, nestedToolbar.firstChild);
-            } else {
-                // Fallback: insert into toolbar directly
-                toolbar.style.setProperty('justify-content', 'flex-start', 'important');
-                toolbar.style.setProperty('display', 'flex', 'important');
-                toolbar.insertBefore(formattingButtons, toolbar.firstChild);
-            }
-            log('✅ Formatting buttons inserted in left section, aligned with Post button');
+        if (isRowReverse) {
+            toolbar.appendChild(formattingButtons);
         } else {
-            // Fallback: ensure toolbar uses flex and insert at beginning (use setProperty for !important)
-            toolbar.style.setProperty('display', 'flex', 'important');
-            toolbar.style.setProperty('justify-content', 'flex-start', 'important');
-            toolbar.style.setProperty('align-items', 'center', 'important');
             toolbar.insertBefore(formattingButtons, toolbar.firstChild);
-            log('✅ Formatting buttons inserted (fallback - Post button not found)');
         }
     } else {
-        // For comments/replies, use simple insertion
-        const emojiButton = toolbar.querySelector('button[aria-label*="emoji" i], button[aria-label*="Emoji" i]');
-        if (emojiButton) {
-            toolbar.insertBefore(formattingButtons, emojiButton);
+        // Comment toolbars / standard injection
+        // Instead of injecting inside the small pill (which squishes the input), 
+        // we append it below the form or the closest macro-wrapper.
+        const formWrapper = editor.closest('form') || editor.closest('.comments-comment-box') || toolbar.parentElement.parentElement;
+        
+        formattingButtons.style.setProperty('margin-top', '8px', 'important');
+        formattingButtons.style.setProperty('margin-bottom', '8px', 'important');
+        formattingButtons.style.setProperty('width', '100%', 'important');
+        formattingButtons.style.setProperty('justify-content', 'flex-start', 'important');
+        
+        if (formWrapper && formWrapper.parentElement) {
+            // Append right after the form wrapper
+            formWrapper.insertAdjacentElement('afterend', formattingButtons);
         } else {
-            toolbar.insertBefore(formattingButtons, toolbar.firstChild);
+            // Fallback
+            toolbar.appendChild(formattingButtons);
         }
-        log('✅ Formatting buttons inserted for comment/reply');
     }
 
-    // Set up removal observer
+    log('✅ Formatting buttons inserted into Document');
+
+    // Keep a reference to the container we injected into
+    const insertionParent = formattingButtons.parentElement;
+
+    // Clean up when the editor is removed from the DOM
     const removalObserver = new MutationObserver(() => {
-        if (!document.contains(editor)) {
+        if (!editor.isConnected) {
             formattingButtons.remove();
             state.editors.delete(editor);
             state.formattingBars.delete(editor);
@@ -1470,16 +1392,24 @@ function attachFormatter(editor) {
             }
             removalObserver.disconnect();
             log('Editor removed, cleaned up formatter');
+        } else if (insertionParent && !insertionParent.contains(formattingButtons)) {
+            // React might have re-rendered the surrounding UI and removed our buttons.
+            // If the editor is still around, we should try to re-attach.
+            log('Formatting buttons were removed by external script. Removing editor from state to trigger re-scan.');
+            state.editors.delete(editor);
+            state.formattingBars.delete(editor);
+            formattingButtons.remove();
+            removalObserver.disconnect();
         }
     });
 
-    // Observe both posts and comments containers
-    const container = editor.closest('[role="dialog"], .share-box, .share-creation-state, form, [class*="comment"]');
-    if (container) {
-        removalObserver.observe(container, { childList: true, subtree: true });
-    }
+    const observerTarget = isModalEditor 
+        ? (editor.closest('[role="dialog"], .share-box, .share-creation-state') || document.body)
+        : (editor.closest('form, [class*="comment"]') || document.body);
+        
+    removalObserver.observe(observerTarget, { childList: true, subtree: true });
 
-    // Track focus
+    // Track focus for all editor types
     editor.addEventListener('focus', () => {
         state.currentEditor = editor;
         log('Editor focused:', editor);
@@ -1631,14 +1561,14 @@ function init() {
         setTimeout(scanForEditors, 2000);
         setTimeout(scanForEditors, 3000);
 
-        // Periodic scan every 2 seconds for robustness
+        // Periodic scan every 1 second for robustness (catches Shadow DOM insertions)
         setInterval(() => {
             const editor = findPostEditor();
             if (editor && !state.editors.has(editor)) {
                 log('Periodic scan found new editor');
                 scanForEditors();
             }
-        }, 2000);
+        }, 1000);
 
         log('LinkedIn Formatter initialized successfully');
     } catch (error) {
