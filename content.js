@@ -611,6 +611,11 @@ function clearFormatting(text) {
     // Remove numbered lists (e.g., "1. ", "2) ", etc.)
     result = result.replace(/^\d+[\.\)]\s+/gm, '');
 
+    // Collapse consecutive newlines to single newlines
+    // Prevents extra blank lines when clearing formatting across <p> elements
+    // (selection.toString() can return \n\n between paragraphs)
+    result = result.replace(/\n{2,}/g, '\n');
+
     log('clearFormatting - output text length:', result?.length || 0);
     return result;
 }
@@ -962,9 +967,49 @@ function formatText(action) {
         const rangeHasContent = range.toString().length > 0;
         log(`Range has content: ${rangeHasContent}, formattedText length: ${formattedText.length}`);
 
-        if (rangeHasContent) {
-            // PRIMARY PATH: Range-based replacement (works for comments)
-            log('Using range-based replacement');
+        const editorEl = state.currentEditor || document.activeElement;
+        if (editorEl && editorEl.isContentEditable) {
+            editorEl.focus();
+        }
+
+        const lines = formattedText.split('\n');
+        const isMultiline = lines.length > 1;
+        let insertSuccess = false;
+
+        if (isMultiline) {
+            // MULTI-LINE: Insert line-by-line to produce clean paragraph structure.
+            // Bulk insertText with \n creates wrong block elements (e.g. <div> vs <p>)
+            // and range.insertNode with a \n text node leaves orphan block wrappers.
+            log('Multi-line replacement: inserting line by line');
+
+            // Delete current selection via execCommand (works on native selection
+            // even when our range object is broken in LinkedIn's main post modal)
+            const deleted = document.execCommand('delete', false, null);
+            log(`execCommand delete result: ${deleted}`);
+
+            if (deleted) {
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].length > 0) {
+                        document.execCommand('insertText', false, lines[i]);
+                    }
+                    if (i < lines.length - 1) {
+                        document.execCommand('insertParagraph', false, null);
+                    }
+                }
+                insertSuccess = true;
+            }
+        }
+
+        if (!insertSuccess) {
+            // SINGLE-LINE or multiline delete failed: try atomic insertText
+            const cmdSuccess = document.execCommand('insertText', false, formattedText);
+            log(`execCommand insertText result: ${cmdSuccess}`);
+            insertSuccess = cmdSuccess;
+        }
+
+        if (!insertSuccess && rangeHasContent) {
+            // RANGE FALLBACK: execCommand didn't work, use range-based replacement
+            log('Using range-based replacement as fallback');
             range.deleteContents();
             const textNode = document.createTextNode(formattedText);
             range.insertNode(textNode);
@@ -974,32 +1019,20 @@ function formatText(action) {
             newRange.collapse(true);
             selection.removeAllRanges();
             selection.addRange(newRange);
-        } else {
-            // FALLBACK PATH: execCommand-based replacement
-            // Handles LinkedIn's main post modal where range is empty
-            log('Using execCommand fallback (range was empty but selection exists)');
+        }
 
-            const editorEl = state.currentEditor || document.activeElement;
+        if (!insertSuccess && !rangeHasContent) {
+            // LAST RESORT: synthetic input events
+            log('Using synthetic input events as last resort');
             if (editorEl && editorEl.isContentEditable) {
-                editorEl.focus();
-            }
-
-            const success = document.execCommand('insertText', false, formattedText);
-            log(`execCommand insertText result: ${success}`);
-
-            if (!success) {
-                log('execCommand failed, trying synthetic input events');
-                const editorEl2 = state.currentEditor || document.activeElement;
-                if (editorEl2 && editorEl2.isContentEditable) {
-                    editorEl2.dispatchEvent(new InputEvent('beforeinput', {
-                        bubbles: true, cancelable: true,
-                        inputType: 'insertText', data: formattedText
-                    }));
-                    editorEl2.dispatchEvent(new InputEvent('input', {
-                        bubbles: true, cancelable: false,
-                        inputType: 'insertText', data: formattedText
-                    }));
-                }
+                editorEl.dispatchEvent(new InputEvent('beforeinput', {
+                    bubbles: true, cancelable: true,
+                    inputType: 'insertText', data: formattedText
+                }));
+                editorEl.dispatchEvent(new InputEvent('input', {
+                    bubbles: true, cancelable: false,
+                    inputType: 'insertText', data: formattedText
+                }));
             }
         }
 
@@ -1007,11 +1040,12 @@ function formatText(action) {
         const editor = state.currentEditor || document.activeElement;
         if (editor && editor.isContentEditable) {
             setTimeout(() => {
+                // Use plain Event (not InputEvent with data) to avoid LinkedIn's
+                // framework re-processing newlines into extra paragraph breaks.
+                // The insertion itself (execCommand or insertNode) already fired
+                // native events; this is just a notification for UI updates.
                 const events = [
-                    new InputEvent('input', {
-                        bubbles: true, cancelable: false,
-                        inputType: 'insertText', data: formattedText
-                    }),
+                    new Event('input', { bubbles: true }),
                     new Event('change', { bubbles: true })
                 ];
                 events.forEach(event => {
