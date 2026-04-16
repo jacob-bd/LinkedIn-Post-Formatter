@@ -60,7 +60,6 @@ const state = {
     urlObserver: null,
     urlCheckInterval: null,  // Store interval ID for cleanup
     currentEditor: null,
-    savedSelection: null,  // Store selection when opening dropdown
     keyboardShortcutsEnabled: true  // Cache keyboard shortcuts setting
 };
 
@@ -621,24 +620,6 @@ function clearFormatting(text) {
     return result;
 }
 
-// Save current selection
-function saveSelection() {
-    const selection = window.getSelection();
-    if (selection.rangeCount > 0) {
-        state.savedSelection = selection.getRangeAt(0).cloneRange();
-        log('Selection saved - length:', state.savedSelection?.toString().length || 0);
-    }
-}
-
-// Restore saved selection
-function restoreSelection() {
-    if (state.savedSelection) {
-        const selection = window.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(state.savedSelection);
-        log('Selection restored - length:', state.savedSelection?.toString().length || 0);
-    }
-}
 
 // Create font dropdown menu
 function createFontDropdown() {
@@ -659,6 +640,10 @@ function createFontDropdown() {
         max-height: 300px;
         overflow-y: auto;
     `;
+
+    dropdown.onmousedown = (e) => {
+        e.preventDefault();
+    };
 
     const fontOptions = [
         { text: '𝗦𝗮𝗻𝘀-𝘀𝗲𝗿𝗶𝗳', action: 'sansSerif', label: 'Sans-serif' },
@@ -700,11 +685,6 @@ function createFontDropdown() {
             e.preventDefault();
             e.stopPropagation();
 
-            // Always restore selection to guarantee focus returns to the editor
-            if (state.savedSelection) {
-                restoreSelection();
-            }
-
             // Apply the formatting
             formatText(option.action);
             trackUsage(option.action);
@@ -736,6 +716,10 @@ function createListDropdown() {
         z-index: 1000;
         min-width: 180px;
     `;
+
+    dropdown.onmousedown = (e) => {
+        e.preventDefault();
+    };
 
     const listOptions = [
         { text: '•  Bullet list', action: 'bullet' },
@@ -769,11 +753,6 @@ function createListDropdown() {
         item.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
-            
-            // Always restore selection to guarantee focus returns to the editor
-            if (state.savedSelection) {
-                restoreSelection();
-            }
             
             formatText(option.action);
             trackUsage(option.action);
@@ -881,8 +860,6 @@ function createFormattingButtons() {
         // Prevent focus stealing on all buttons
         btn.onmousedown = (e) => {
             e.preventDefault();
-            // Save selection in case we need it later (especially for dropdown)
-            saveSelection();
         };
 
         // Handle dropdown button specially
@@ -921,11 +898,6 @@ function createFormattingButtons() {
                 e.preventDefault();
                 e.stopPropagation();
                 log(`Button clicked: ${button.action}`);
-                
-                // If selection was lost, restore it
-                if (state.savedSelection) {
-                    restoreSelection();
-                }
                 
                 formatText(button.action);
                 trackUsage(button.action);
@@ -1051,12 +1023,6 @@ function formatText(action) {
         // Ensure the editor has focus before we try to manipulate content.
         if (editorEl && editorEl.isContentEditable && document.activeElement !== editorEl) {
             editorEl.focus();
-            // Restore the specific selection if we changed focus
-            if (window.getSelection && range) {
-                const sel = window.getSelection();
-                sel.removeAllRanges();
-                sel.addRange(range);
-            }
         }
 
         let insertSuccess = false;
