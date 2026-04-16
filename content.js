@@ -607,6 +607,7 @@ function clearFormatting(text) {
     // Remove bullet points (but preserve spaces after them if any)
     result = result.replace(/^•\s*/gm, '');
     result = result.replace(/●\s*/g, '');
+    result = result.replace(/^→\s*/gm, '');
 
     // Remove numbered lists (e.g., "1. ", "2) ", etc.)
     result = result.replace(/^\d+[\.\)]\s+/gm, '');
@@ -666,7 +667,9 @@ function createFontDropdown() {
         { text: '🅝🅔🅖🅐🅣🅘🅥🅔', action: 'negativeCircled', label: 'Negative Circled' },
         { text: '🅂🅀🅄🄰🅁🄴🄳', action: 'squared', label: 'Squared' },
         { text: 'Ｆｕｌｌｗｉｄｔｈ', action: 'fullwidth', label: 'Fullwidth' },
-        { text: '𝙼𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎', action: 'monospace', label: 'Monospace' }
+        { text: '𝙼𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎', action: 'monospace', label: 'Monospace' },
+        { text: 'AAA', action: 'uppercase', label: 'UPPERCASE' },
+        { text: 'aaa', action: 'lowercase', label: 'lowercase' }
     ];
 
     fontOptions.forEach(option => {
@@ -697,14 +700,85 @@ function createFontDropdown() {
             e.preventDefault();
             e.stopPropagation();
 
-            // Restore the saved selection before formatting
-            restoreSelection();
+            // Only restore if selection was lost despite preventDefault
+            const selection = window.getSelection();
+            if (!selection.rangeCount && state.savedSelection) {
+                restoreSelection();
+            }
 
             // Apply the formatting
             formatText(option.action);
             trackUsage(option.action);
 
             // Close the dropdown
+            dropdown.style.display = 'none';
+        };
+
+        dropdown.appendChild(item);
+    });
+
+    return dropdown;
+}
+
+// Create list style dropdown menu
+function createListDropdown() {
+    const dropdown = document.createElement('div');
+    dropdown.className = 'linkedin-formatter-list-dropdown';
+    dropdown.style.cssText = `
+        display: none;
+        position: absolute;
+        bottom: 45px;
+        left: 0;
+        background: white;
+        border: 1px solid rgba(0,0,0,0.15);
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        padding: 8px 0;
+        z-index: 1000;
+        min-width: 180px;
+    `;
+
+    const listOptions = [
+        { text: '•  Bullet list', action: 'bullet' },
+        { text: '→  Arrow list', action: 'arrow' },
+        { text: '1.  Numbered list', action: 'numbered' }
+    ];
+
+    listOptions.forEach(option => {
+        const item = document.createElement('div');
+        item.className = 'list-option';
+        item.textContent = option.text;
+        item.title = option.text;
+        item.style.cssText = `
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        `;
+
+        item.onmouseenter = () => {
+            item.style.backgroundColor = 'rgba(0,0,0,0.08)';
+        };
+        item.onmouseleave = () => {
+            item.style.backgroundColor = 'transparent';
+        };
+
+        item.onmousedown = (e) => {
+            e.preventDefault();
+        };
+
+        item.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Only restore if selection was lost
+            const selection = window.getSelection();
+            if (!selection.rangeCount && state.savedSelection) {
+                restoreSelection();
+            }
+            
+            formatText(option.action);
+            trackUsage(option.action);
             dropdown.style.display = 'none';
         };
 
@@ -741,8 +815,7 @@ function createFormattingButtons() {
         { text: 'S̶', action: 'strikethrough', title: `Strikethrough (${modifierKey}+S)` },
         { text: 'U̲', action: 'underline', title: `Underline (${modifierKey}+U)` },
         { text: 'Aa', action: 'font-dropdown', title: 'Font Style', isDropdown: true },
-        { text: '•', action: 'bullet', title: 'Bullet List' },
-        { text: '1.', action: 'numbered', title: 'Numbered List' },
+        { text: '•', action: 'list-dropdown', title: 'List Style', isDropdown: true },
         { text: '✕', action: 'clear', title: 'Clear Formatting' }
     ];
 
@@ -752,7 +825,7 @@ function createFormattingButtons() {
         btn.className = 'linkedin-formatter-btn';
 
         // Create custom SVG icons for special buttons
-        if (button.action === 'bullet') {
+        if (button.action === 'list-dropdown') {
             btn.innerHTML = `
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <circle cx="3" cy="4" r="1.5" fill="currentColor"/>
@@ -760,17 +833,6 @@ function createFormattingButtons() {
                     <circle cx="3" cy="9" r="1.5" fill="currentColor"/>
                     <line x1="6" y1="9" x2="16" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                     <circle cx="3" cy="14" r="1.5" fill="currentColor"/>
-                    <line x1="6" y1="14" x2="16" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                </svg>
-            `;
-        } else if (button.action === 'numbered') {
-            btn.innerHTML = `
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <text x="1" y="6" font-size="6" fill="currentColor" font-family="Arial">1</text>
-                    <line x1="6" y1="4" x2="16" y2="4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                    <text x="1" y="11" font-size="6" fill="currentColor" font-family="Arial">2</text>
-                    <line x1="6" y1="9" x2="16" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                    <text x="1" y="16" font-size="6" fill="currentColor" font-family="Arial">3</text>
                     <line x1="6" y1="14" x2="16" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                 </svg>
             `;
@@ -794,7 +856,7 @@ function createFormattingButtons() {
         // Style to match LinkedIn's buttons
         btn.style.cssText = `
             background-color: transparent;
-            border: ${button.action === 'font-dropdown' ? '1px solid rgba(0,0,0,0.2)' : 'none'};
+            border: ${button.isDropdown ? '1px solid rgba(0,0,0,0.2)' : 'none'};
             color: rgba(0,0,0,0.6);
             padding: 8px;
             cursor: pointer;
@@ -827,13 +889,23 @@ function createFormattingButtons() {
 
         // Handle dropdown button specially
         if (button.isDropdown) {
-            const dropdown = createFontDropdown();
+            let dropdown;
+            if (button.action === 'font-dropdown') {
+                dropdown = createFontDropdown();
+            } else if (button.action === 'list-dropdown') {
+                dropdown = createListDropdown();
+            }
             container.appendChild(dropdown);
 
             btn.onclick = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                log('Font dropdown button clicked');
+                log(`Dropdown button clicked: ${button.action}`);
+
+                // Close any other open dropdowns in the toolbar
+                container.querySelectorAll('.linkedin-formatter-font-dropdown, .linkedin-formatter-list-dropdown').forEach(d => {
+                    if (d !== dropdown) d.style.display = 'none';
+                });
 
                 // Toggle dropdown visibility
                 const isVisible = dropdown.style.display === 'block';
@@ -920,7 +992,7 @@ function formatText(action) {
         }
 
         // For non-bullet actions, we need selected text
-        if (selectedText.length === 0 && action !== 'bullet') {
+        if (selectedText.length === 0 && action !== 'bullet' && action !== 'arrow') {
             log('No text selected for formatting');
             return;
         }
@@ -947,9 +1019,19 @@ function formatText(action) {
         } else if (action === 'bullet') {
             formattedText = processBullets(selectedText, range, rangeIsEmpty);
 
+        // === ARROW BULLET ACTION ===
+        } else if (action === 'arrow') {
+            formattedText = processBullets(selectedText, range, rangeIsEmpty, '→');
+
         // === NUMBERED LIST ACTION ===
         } else if (action === 'numbered') {
             formattedText = processNumberedList(selectedText, range, rangeIsEmpty);
+
+        // === UPPERCASE / LOWERCASE ===
+        } else if (action === 'uppercase') {
+            formattedText = clearFormatting(selectedText).toUpperCase();
+        } else if (action === 'lowercase') {
+            formattedText = clearFormatting(selectedText).toLowerCase();
 
         // === CLEAR FORMATTING ===
         } else if (action === 'clear') {
@@ -968,63 +1050,69 @@ function formatText(action) {
         log(`Range has content: ${rangeHasContent}, formattedText length: ${formattedText.length}`);
 
         const editorEl = state.currentEditor || document.activeElement;
-        if (editorEl && editorEl.isContentEditable) {
+        
+        // Ensure the editor has focus before we try to manipulate content.
+        // We only call focus() if it's not the active element to prevent destroying
+        // the active caret/selection position unnecessarily.
+        if (editorEl && editorEl.isContentEditable && document.activeElement !== editorEl) {
             editorEl.focus();
-        }
-
-        const lines = formattedText.split('\n');
-        const isMultiline = lines.length > 1;
-        let insertSuccess = false;
-
-        if (isMultiline) {
-            // MULTI-LINE: Insert line-by-line to produce clean paragraph structure.
-            // Bulk insertText with \n creates wrong block elements (e.g. <div> vs <p>)
-            // and range.insertNode with a \n text node leaves orphan block wrappers.
-            log('Multi-line replacement: inserting line by line');
-
-            // Delete current selection via execCommand (works on native selection
-            // even when our range object is broken in LinkedIn's main post modal)
-            const deleted = document.execCommand('delete', false, null);
-            log(`execCommand delete result: ${deleted}`);
-
-            if (deleted) {
-                for (let i = 0; i < lines.length; i++) {
-                    if (lines[i].length > 0) {
-                        document.execCommand('insertText', false, lines[i]);
-                    }
-                    if (i < lines.length - 1) {
-                        document.execCommand('insertParagraph', false, null);
-                    }
-                }
-                insertSuccess = true;
+            // Restore the specific selection if we changed focus
+            if (window.getSelection && range) {
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
             }
         }
 
-        if (!insertSuccess) {
-            // SINGLE-LINE or multiline delete failed: try atomic insertText
-            const cmdSuccess = document.execCommand('insertText', false, formattedText);
-            log(`execCommand insertText result: ${cmdSuccess}`);
-            insertSuccess = cmdSuccess;
-        }
-
-        if (!insertSuccess && rangeHasContent) {
-            // RANGE FALLBACK: execCommand didn't work, use range-based replacement
-            log('Using range-based replacement as fallback');
+        if (rangeHasContent) {
+            // PRIMARY PATH: Range-based replacement (works perfectly for Comments)
+            // By inserting a DocumentFragment/TextNode, we preserve precise formatting 
+            // and newlines via white-space: pre-wrap CSS used by LinkedIn.
+            log('Using range-based replacement');
             range.deleteContents();
             const textNode = document.createTextNode(formattedText);
             range.insertNode(textNode);
 
+            // Move caret to end of insertion
             const newRange = document.createRange();
             newRange.setStart(textNode, formattedText.length);
             newRange.collapse(true);
             selection.removeAllRanges();
             selection.addRange(newRange);
-        }
+        } else {
+            // FALLBACK PATH: (Handles LinkedIn's main post modal where range is empty)
+            log('Using fallback replacement (execCommand + synthetic events)');
+            let insertSuccess = false;
+            
+            const lines = formattedText.split('\n');
+            const isMultiline = lines.length > 1;
 
-        if (!insertSuccess && !rangeHasContent) {
-            // LAST RESORT: synthetic input events
-            log('Using synthetic input events as last resort');
-            if (editorEl && editorEl.isContentEditable) {
+            if (isMultiline) {
+                log('Multi-line fallback: inserting line by line');
+                const deleted = document.execCommand('delete', false, null);
+                log(`execCommand delete result: ${deleted}`);
+                
+                if (deleted) {
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].length > 0) {
+                            document.execCommand('insertText', false, lines[i]);
+                        }
+                        if (i < lines.length - 1) {
+                            document.execCommand('insertParagraph', false, null);
+                        }
+                    }
+                    insertSuccess = true;
+                }
+            }
+
+            if (!insertSuccess) {
+                insertSuccess = document.execCommand('insertText', false, formattedText);
+                log(`execCommand insertText result: ${insertSuccess}`);
+            }
+
+            if (!insertSuccess && editorEl && editorEl.isContentEditable) {
+                // LAST RESORT: synthetic input events
+                log('Using synthetic input events as last resort');
                 editorEl.dispatchEvent(new InputEvent('beforeinput', {
                     bubbles: true, cancelable: true,
                     inputType: 'insertText', data: formattedText
@@ -1061,44 +1149,52 @@ function formatText(action) {
 }
 
 // Helper: Process bullet formatting
-function processBullets(selectedText, range, rangeIsEmpty) {
+function processBullets(selectedText, range, rangeIsEmpty, bulletChar = '•') {
+    const allBulletChars = ['•', '●', '→'];
+
+    // Strip any bullet character from a line
+    function stripAnyBullet(text) {
+        let t = text.trim();
+        for (const bc of allBulletChars) {
+            if (t.startsWith(bc + ' ')) return t.slice(bc.length + 1).trim();
+            if (t.startsWith(bc)) return t.slice(bc.length).trim();
+        }
+        return t;
+    }
+
     if (rangeIsEmpty) {
         // String-based approach (main post modal with broken ranges)
         log('Bullet: using string-based fallback');
         const lines = selectedText.split('\n').filter(line => line.trim());
 
-        if (lines.length === 0) return '• ';
+        if (lines.length === 0) return bulletChar + ' ';
 
         if (lines.length === 1) {
             const text = lines[0].trim();
-            if (text.startsWith('• ')) return text.slice(2);
-            if (text.startsWith('•')) return text.slice(1).trim();
-            return '• ' + text;
+            if (text.startsWith(bulletChar)) {
+                return stripAnyBullet(text);
+            }
+            return bulletChar + ' ' + stripAnyBullet(text);
         }
 
-        const allHaveBullets = lines.every(line => line.trim().startsWith('•'));
-        if (allHaveBullets) {
-            return lines.map(line => {
-                const t = line.trim();
-                if (t.startsWith('• ')) return t.slice(2);
-                if (t.startsWith('•')) return t.slice(1).trim();
-                return t;
-            }).join('\n');
+        const allHaveTargetBullet = lines.every(line => line.trim().startsWith(bulletChar));
+        if (allHaveTargetBullet) {
+            return lines.map(line => stripAnyBullet(line)).join('\n');
         }
         return lines.map(line => {
             const t = line.trim();
             if (!t) return '';
-            if (t.startsWith('•')) return t;
-            return '• ' + t;
+            return bulletChar + ' ' + stripAnyBullet(t);
         }).join('\n');
     }
 
     // Range-based approach (comments with working ranges)
     if (range.startContainer === range.endContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
         const text = selectedText.trim();
-        if (text.startsWith('• ')) return text.slice(2);
-        if (text.startsWith('•')) return text.slice(1).trim();
-        return '• ' + text;
+        if (text.startsWith(bulletChar)) {
+            return stripAnyBullet(text);
+        }
+        return bulletChar + ' ' + stripAnyBullet(text);
     }
 
     // Multi-line via range cloning
@@ -1112,22 +1208,16 @@ function processBullets(selectedText, range, rangeIsEmpty) {
         .trim();
     const lines = textWithBreaks.split('\n').filter(line => line.trim());
 
-    if (lines.length === 0) return '• ' + selectedText;
+    if (lines.length === 0) return bulletChar + ' ' + selectedText;
 
-    const allHaveBullets = lines.every(line => line.trim().startsWith('•'));
-    if (allHaveBullets) {
-        return lines.map(line => {
-            const t = line.trim();
-            if (t.startsWith('• ')) return t.slice(2);
-            if (t.startsWith('•')) return t.slice(1).trim();
-            return t;
-        }).join('\n');
+    const allHaveTargetBullet = lines.every(line => line.trim().startsWith(bulletChar));
+    if (allHaveTargetBullet) {
+        return lines.map(line => stripAnyBullet(line)).join('\n');
     }
     return lines.map(line => {
         const t = line.trim();
         if (!t) return '';
-        if (t.startsWith('•')) return t;
-        return '• ' + t;
+        return bulletChar + ' ' + stripAnyBullet(t);
     }).join('\n');
 }
 
@@ -1565,7 +1655,8 @@ function setupKeyboardShortcuts() {
 const ALLOWED_ACTIONS = [
     'bold', 'italic', 'boldItalic', 'strikethrough', 'underline',
     'monospace', 'sansSerif', 'script', 'circled', 'negativeCircled',
-    'squared', 'fullwidth', 'bullet', 'numbered', 'clear'
+    'squared', 'fullwidth', 'bullet', 'arrow', 'numbered',
+    'uppercase', 'lowercase', 'clear'
 ];
 
 // Message listener for extension communication
