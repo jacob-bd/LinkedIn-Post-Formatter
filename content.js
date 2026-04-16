@@ -63,79 +63,68 @@ const state = {
     keyboardShortcutsEnabled: true  // Cache keyboard shortcuts setting
 };
 
-// Unicode character mapping for text formatting
-const unicodeRanges = {
-    bold: {
-        uppercase: 0x1D5D4,  // A-Z: U+1D5D4 to U+1D5ED
-        lowercase: 0x1D5EE,  // a-z: U+1D5EE to U+1D607
-        numbers: 0x1D7EC     // 0-9: U+1D7EC to U+1D7F5
-    },
-    italic: {
-        uppercase: 0x1D608,  // A-Z
-        lowercase: 0x1D622   // a-z
-    },
-    boldItalic: {
-        uppercase: 0x1D63C,  // A-Z
-        lowercase: 0x1D656   // a-z
-    },
-    monospace: {
-        uppercase: 0x1D670,  // A-Z: U+1D670 to U+1D689
-        lowercase: 0x1D68A,  // a-z: U+1D68A to U+1D6A3
-        numbers: 0x1D7F6     // 0-9: U+1D7F6 to U+1D7FF
-    },
-    sansSerif: {
-        uppercase: 0x1D5A0,  // A-Z
-        lowercase: 0x1D5BA,  // a-z
-        numbers: 0x1D7E2     // 0-9
-    },
-    script: {
-        uppercase: 0x1D49C,  // A-Z (with some exceptions)
-        lowercase: 0x1D4B6   // a-z
-    },
-    // Strikethrough and underline use combining characters
-    strikethrough: {
-        combiningChar: '\u0336'  // Combining long stroke overlay
-    },
-    underline: {
-        combiningChar: '\u0332'  // Combining low line
-    }
+// ============================================================
+// UNICODE FORMATTING ENGINE — Centralized Configuration
+// ============================================================
+
+// Single source of truth: all Unicode ranges for reverse conversion.
+// Each entry maps a formatted code-point range back to its ASCII base.
+// Format: [rangeStart, rangeEnd, asciiBase]
+const FORMAT_RANGES = [
+    // Bold (Sans-Serif)
+    [0x1D5D4, 0x1D5ED, 65],  // A-Z
+    [0x1D5EE, 0x1D607, 97],  // a-z
+    [0x1D7EC, 0x1D7F5, 48],  // 0-9
+    // Italic
+    [0x1D608, 0x1D621, 65],  // A-Z
+    [0x1D622, 0x1D63B, 97],  // a-z
+    // Bold Italic
+    [0x1D63C, 0x1D655, 65],  // A-Z
+    [0x1D656, 0x1D66F, 97],  // a-z
+    // Monospace
+    [0x1D670, 0x1D689, 65],  // A-Z
+    [0x1D68A, 0x1D6A3, 97],  // a-z
+    [0x1D7F6, 0x1D7FF, 48],  // 0-9
+    // Sans-Serif (plain)
+    [0x1D5A0, 0x1D5B9, 65],  // A-Z
+    [0x1D5BA, 0x1D5D3, 97],  // a-z
+    [0x1D7E2, 0x1D7EB, 48],  // 0-9
+    // Script
+    [0x1D49C, 0x1D4B5, 65],  // A-Z
+    [0x1D4B6, 0x1D4CF, 97],  // a-z
+    // Circled
+    [0x24B6, 0x24CF, 65],    // A-Z
+    [0x24D0, 0x24E9, 97],    // a-z
+    [0x2460, 0x2468, 49],    // 1-9
+    // Negative Circled
+    [0x1F150, 0x1F169, 65],  // A-Z
+    // Squared
+    [0x1F130, 0x1F149, 65],  // A-Z
+    // Fullwidth
+    [0xFF21, 0xFF3A, 65],    // A-Z
+    [0xFF41, 0xFF5A, 97],    // a-z
+    [0xFF10, 0xFF19, 48],    // 0-9
+];
+
+// Style configs for forward conversion (ASCII → Unicode).
+// Used by convertToUnicode and isFormatted.
+const STYLE_CONFIGS = {
+    bold:         { uppercase: 0x1D5D4, lowercase: 0x1D5EE, numbers: 0x1D7EC },
+    italic:       { uppercase: 0x1D608, lowercase: 0x1D622 },
+    boldItalic:   { uppercase: 0x1D63C, lowercase: 0x1D656 },
+    monospace:    { uppercase: 0x1D670, lowercase: 0x1D68A, numbers: 0x1D7F6 },
+    sansSerif:    { uppercase: 0x1D5A0, lowercase: 0x1D5BA, numbers: 0x1D7E2 },
+    script:       { uppercase: 0x1D49C, lowercase: 0x1D4B6 },
+    strikethrough: { combiningChar: '\u0336' },
+    underline:     { combiningChar: '\u0332' },
+    // Styles below use special-case logic in convertToUnicode
+    circled:         { uppercase: 0x24B6, lowercase: 0x24D0 },
+    negativeCircled: { uppercase: 0x1F150 },
+    squared:         { uppercase: 0x1F130 },
+    fullwidth:       { uppercase: 0xFF21, lowercase: 0xFF41, numbers: 0xFF10 },
 };
 
-// Legacy maps for backwards compatibility and reverse conversion
-const boldMap = {
-    'A': '𝐀', 'B': '𝐁', 'C': '𝐂', 'D': '𝐃', 'E': '𝐄', 'F': '𝐅', 'G': '𝐆', 'H': '𝐇', 'I': '𝐈', 'J': '𝐉',
-    'K': '𝐊', 'L': '𝐋', 'M': '𝐌', 'N': '𝐍', 'O': '𝐎', 'P': '𝐏', 'Q': '𝐐', 'R': '𝐑', 'S': '𝐒', 'T': '𝐓',
-    'U': '𝐔', 'V': '𝐕', 'W': '𝐖', 'X': '𝐗', 'Y': '𝐘', 'Z': '𝐙',
-    'a': '𝐚', 'b': '𝐛', 'c': '𝐜', 'd': '𝐝', 'e': '𝐞', 'f': '𝐟', 'g': '𝐠', 'h': '𝐡', 'i': '𝐢', 'j': '𝐣',
-    'k': '𝐤', 'l': '𝐥', 'm': '𝐦', 'n': '𝐧', 'o': '𝐨', 'p': '𝐩', 'q': '𝐪', 'r': '𝐫', 's': '𝐬', 't': '𝐭',
-    'u': '𝐮', 'v': '𝐯', 'w': '𝐰', 'x': '𝐱', 'y': '𝐲', 'z': '𝐳',
-    '0': '𝟎', '1': '𝟏', '2': '𝟐', '3': '𝟑', '4': '𝟒', '5': '𝟓', '6': '𝟔', '7': '𝟕', '8': '𝟖', '9': '𝟗'
-};
-
-const italicMap = {
-    'A': '𝐴', 'B': '𝐵', 'C': '𝐶', 'D': '𝐷', 'E': '𝐸', 'F': '𝐹', 'G': '𝐺', 'H': '𝐻', 'I': '𝐼', 'J': '𝐽',
-    'K': '𝐾', 'L': '𝐿', 'M': '𝑀', 'N': '𝑁', 'O': '𝑂', 'P': '𝑃', 'Q': '𝑄', 'R': '𝑅', 'S': '𝑆', 'T': '𝑇',
-    'U': '𝑈', 'V': '𝑉', 'W': '𝑊', 'X': '𝑋', 'Y': '𝑌', 'Z': '𝑍',
-    'a': '𝑎', 'b': '𝑏', 'c': '𝑐', 'd': '𝑑', 'e': '𝑒', 'f': '𝑓', 'g': '𝑔', 'h': 'ℎ', 'i': '𝑖', 'j': '𝑗',
-    'k': '𝑘', 'l': '𝑙', 'm': '𝑚', 'n': '𝑛', 'o': '𝑜', 'p': '𝑝', 'q': '𝑞', 'r': '𝑟', 's': '𝑠', 't': '𝑡',
-    'u': '𝑢', 'v': '𝑣', 'w': '𝑤', 'x': '𝑥', 'y': '𝑦', 'z': '𝑧'
-};
-
-const boldItalicMap = {
-    'A': '𝑨', 'B': '𝑩', 'C': '𝑪', 'D': '𝑫', 'E': '𝑬', 'F': '𝑭', 'G': '𝑮', 'H': '𝑯', 'I': '𝑰', 'J': '𝑱',
-    'K': '𝑲', 'L': '𝑳', 'M': '𝑴', 'N': '𝑵', 'O': '𝑶', 'P': '𝑷', 'Q': '𝑸', 'R': '𝑹', 'S': '𝑺', 'T': '𝑻',
-    'U': '𝑼', 'V': '𝑽', 'W': '𝑾', 'X': '𝑿', 'Y': '𝒀', 'Z': '𝒁',
-    'a': '𝒂', 'b': '𝒃', 'c': '𝒄', 'd': '𝒅', 'e': '𝒆', 'f': '𝒇', 'g': '𝒈', 'h': '𝒉', 'i': '𝒊', 'j': '𝒋',
-    'k': '𝒌', 'l': '𝒍', 'm': '𝒎', 'n': '𝒏', 'o': '𝒐', 'p': '𝒑', 'q': '𝒒', 'r': '𝒓', 's': '𝒔', 't': '𝒕',
-    'u': '𝒖', 'v': '𝒗', 'w': '𝒘', 'x': '𝒙', 'y': '𝒚', 'z': '𝒛'
-};
-
-// Reverse lookup maps for O(1) performance instead of O(n) indexOf
-const reverseBoldMap = Object.fromEntries(Object.entries(boldMap).map(([k, v]) => [v, k]));
-const reverseItalicMap = Object.fromEntries(Object.entries(italicMap).map(([k, v]) => [v, k]));
-const reverseBoldItalicMap = Object.fromEntries(Object.entries(boldItalicMap).map(([k, v]) => [v, k]));
-
-// Utility: Debounce function to limit execution frequency (optimized)
+// Utility: Debounce function to limit execution frequency
 function debounce(func, wait) {
     let timeout;
     return function(...args) {
@@ -144,92 +133,24 @@ function debounce(func, wait) {
     };
 }
 
-// Helper function to check if a character is a Unicode formatted character
-function isUnicodeFormattedChar(char) {
-    const codePoint = char.codePointAt(0);
-    
-    // Check all Unicode formatting ranges
-    return (
-        // Bold: U+1D5D4-U+1D607, U+1D7EC-U+1D7F5
-        (codePoint >= 0x1D5D4 && codePoint <= 0x1D607) || (codePoint >= 0x1D7EC && codePoint <= 0x1D7F5) ||
-        // Italic: U+1D608-U+1D63B
-        (codePoint >= 0x1D608 && codePoint <= 0x1D63B) ||
-        // Bold Italic: U+1D63C-U+1D66F
-        (codePoint >= 0x1D63C && codePoint <= 0x1D66F) ||
-        // Monospace: U+1D670-U+1D6A3, U+1D7F6-U+1D7FF
-        (codePoint >= 0x1D670 && codePoint <= 0x1D6A3) || (codePoint >= 0x1D7F6 && codePoint <= 0x1D7FF) ||
-        // Sans-serif: U+1D5A0-U+1D5B9, U+1D5BA-U+1D5D3, U+1D7E2-U+1D7EB
-        (codePoint >= 0x1D5A0 && codePoint <= 0x1D5B9) || (codePoint >= 0x1D5BA && codePoint <= 0x1D5D3) || (codePoint >= 0x1D7E2 && codePoint <= 0x1D7EB) ||
-        // Script: U+1D49C-U+1D4CF, U+1D4B6-U+1D4E9
-        (codePoint >= 0x1D49C && codePoint <= 0x1D4CF) || (codePoint >= 0x1D4B6 && codePoint <= 0x1D4E9) ||
-        // Circled: U+24B6-U+24CF, U+24D0-U+24E9, U+24EA, U+2460-U+2468
-        (codePoint >= 0x24B6 && codePoint <= 0x24CF) || (codePoint >= 0x24D0 && codePoint <= 0x24E9) || 
-        codePoint === 0x24EA || (codePoint >= 0x2460 && codePoint <= 0x2468) ||
-        // Negative Circled: U+1F150-U+1F169
-        (codePoint >= 0x1F150 && codePoint <= 0x1F169) ||
-        // Squared: U+1F130-U+1F149
-        (codePoint >= 0x1F130 && codePoint <= 0x1F149) ||
-        // Fullwidth: U+FF21-U+FF3A, U+FF41-U+FF5A, U+FF10-U+FF19, U+3000
-        (codePoint >= 0xFF21 && codePoint <= 0xFF3A) || (codePoint >= 0xFF41 && codePoint <= 0xFF5A) ||
-        (codePoint >= 0xFF10 && codePoint <= 0xFF19) || codePoint === 0x3000
-    );
-}
-
-// Helper function to convert a Unicode formatted character back to plain ASCII
+// Convert a single Unicode formatted character back to plain ASCII.
+// Returns the original char if it's not a known formatted codepoint.
 function unicodeToPlainChar(char) {
-    const codePoint = char.codePointAt(0);
-    
-    // Bold: U+1D5D4-U+1D607, U+1D7EC-U+1D7F5
-    if (codePoint >= 0x1D5D4 && codePoint <= 0x1D5ED) return String.fromCharCode(65 + (codePoint - 0x1D5D4));
-    if (codePoint >= 0x1D5EE && codePoint <= 0x1D607) return String.fromCharCode(97 + (codePoint - 0x1D5EE));
-    if (codePoint >= 0x1D7EC && codePoint <= 0x1D7F5) return String.fromCharCode(48 + (codePoint - 0x1D7EC));
-    
-    // Italic: U+1D608-U+1D63B
-    if (codePoint >= 0x1D608 && codePoint <= 0x1D621) return String.fromCharCode(65 + (codePoint - 0x1D608));
-    if (codePoint >= 0x1D622 && codePoint <= 0x1D63B) return String.fromCharCode(97 + (codePoint - 0x1D622));
-    
-    // Bold Italic: U+1D63C-U+1D66F
-    if (codePoint >= 0x1D63C && codePoint <= 0x1D655) return String.fromCharCode(65 + (codePoint - 0x1D63C));
-    if (codePoint >= 0x1D656 && codePoint <= 0x1D66F) return String.fromCharCode(97 + (codePoint - 0x1D656));
-    
-    // Monospace: U+1D670-U+1D6A3, U+1D7F6-U+1D7FF
-    if (codePoint >= 0x1D670 && codePoint <= 0x1D689) return String.fromCharCode(65 + (codePoint - 0x1D670));
-    if (codePoint >= 0x1D68A && codePoint <= 0x1D6A3) return String.fromCharCode(97 + (codePoint - 0x1D68A));
-    if (codePoint >= 0x1D7F6 && codePoint <= 0x1D7FF) return String.fromCharCode(48 + (codePoint - 0x1D7F6));
-    
-    // Sans-serif: U+1D5A0-U+1D5B9, U+1D5BA-U+1D5D3, U+1D7E2-U+1D7EB
-    if (codePoint >= 0x1D5A0 && codePoint <= 0x1D5B9) return String.fromCharCode(65 + (codePoint - 0x1D5A0));
-    if (codePoint >= 0x1D5BA && codePoint <= 0x1D5D3) return String.fromCharCode(97 + (codePoint - 0x1D5BA));
-    if (codePoint >= 0x1D7E2 && codePoint <= 0x1D7EB) return String.fromCharCode(48 + (codePoint - 0x1D7E2));
-    
-    // Script: U+1D49C-U+1D4CF, U+1D4B6-U+1D4E9
-    if (codePoint >= 0x1D49C && codePoint <= 0x1D4CF) return String.fromCharCode(65 + (codePoint - 0x1D49C));
-    if (codePoint >= 0x1D4B6 && codePoint <= 0x1D4E9) return String.fromCharCode(97 + (codePoint - 0x1D4B6));
-    
-    // Circled: U+24B6-U+24CF, U+24D0-U+24E9, U+24EA, U+2460-U+2468
-    if (codePoint >= 0x24B6 && codePoint <= 0x24CF) return String.fromCharCode(65 + (codePoint - 0x24B6));
-    if (codePoint >= 0x24D0 && codePoint <= 0x24E9) return String.fromCharCode(97 + (codePoint - 0x24D0));
-    if (codePoint === 0x24EA) return '0';
-    if (codePoint >= 0x2460 && codePoint <= 0x2468) return String.fromCharCode(49 + (codePoint - 0x2460));
-    
-    // Negative Circled: U+1F150-U+1F169
-    if (codePoint >= 0x1F150 && codePoint <= 0x1F169) return String.fromCharCode(65 + (codePoint - 0x1F150));
-    
-    // Squared: U+1F130-U+1F149
-    if (codePoint >= 0x1F130 && codePoint <= 0x1F149) return String.fromCharCode(65 + (codePoint - 0x1F130));
-    
-    // Fullwidth: U+FF21-U+FF3A, U+FF41-U+FF5A, U+FF10-U+FF19, U+3000
-    if (codePoint >= 0xFF21 && codePoint <= 0xFF3A) return String.fromCharCode(65 + (codePoint - 0xFF21));
-    if (codePoint >= 0xFF41 && codePoint <= 0xFF5A) return String.fromCharCode(97 + (codePoint - 0xFF41));
-    if (codePoint >= 0xFF10 && codePoint <= 0xFF19) return String.fromCharCode(48 + (codePoint - 0xFF10));
-    if (codePoint === 0x3000) return ' ';
-    
-    // Check reverse maps for legacy support
-    if (reverseBoldMap[char]) return reverseBoldMap[char];
-    if (reverseItalicMap[char]) return reverseItalicMap[char];
-    if (reverseBoldItalicMap[char]) return reverseBoldItalicMap[char];
-    
-    return char; // Not a Unicode formatted character
+    const cp = char.codePointAt(0);
+
+    // Special cases not covered by FORMAT_RANGES
+    if (cp === 0x24EA) return '0';  // Circled zero
+    if (cp === 0x3000) return ' ';  // Fullwidth space
+
+    // Check all ranges (O(n) on ~24 entries — fast for single-char lookups)
+    for (let i = 0; i < FORMAT_RANGES.length; i++) {
+        const r = FORMAT_RANGES[i];
+        if (cp >= r[0] && cp <= r[1]) {
+            return String.fromCharCode(r[2] + (cp - r[0]));
+        }
+    }
+
+    return char;
 }
 
 // Enhanced Unicode conversion using character code ranges
@@ -240,21 +161,12 @@ function convertToUnicode(text, style) {
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
             const code = char.charCodeAt(0);
-            // Uppercase A-Z → Ⓐ-Ⓩ (U+24B6 to U+24CF)
             if (code >= 65 && code <= 90) {
                 result += String.fromCodePoint(0x24B6 + (code - 65));
-            }
-            // Lowercase a-z → ⓐ-ⓩ (U+24D0 to U+24E9)
-            else if (code >= 97 && code <= 122) {
+            } else if (code >= 97 && code <= 122) {
                 result += String.fromCodePoint(0x24D0 + (code - 97));
-            }
-            // Numbers 0-9 → ⓪-⑨ (U+24EA, U+2460-2468)
-            else if (code >= 48 && code <= 57) {
-                if (char === '0') {
-                    result += '⓪';
-                } else {
-                    result += String.fromCodePoint(0x245F + (code - 48));
-                }
+            } else if (code >= 48 && code <= 57) {
+                result += char === '0' ? '⓪' : String.fromCodePoint(0x245F + (code - 48));
             } else {
                 result += char;
             }
@@ -268,12 +180,9 @@ function convertToUnicode(text, style) {
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
             const code = char.charCodeAt(0);
-            // Uppercase A-Z → 🅐-🅩 (U+1F150 to U+1F169)
             if (code >= 65 && code <= 90) {
                 result += String.fromCodePoint(0x1F150 + (code - 65));
-            }
-            // Lowercase - use uppercase negative circled
-            else if (code >= 97 && code <= 122) {
+            } else if (code >= 97 && code <= 122) {
                 result += String.fromCodePoint(0x1F150 + (code - 97));
             } else {
                 result += char;
@@ -288,12 +197,9 @@ function convertToUnicode(text, style) {
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
             const code = char.charCodeAt(0);
-            // Uppercase A-Z → 🄰-🅉 (U+1F130 to U+1F149)
             if (code >= 65 && code <= 90) {
                 result += String.fromCodePoint(0x1F130 + (code - 65));
-            }
-            // Lowercase - use uppercase squared
-            else if (code >= 97 && code <= 122) {
+            } else if (code >= 97 && code <= 122) {
                 result += String.fromCodePoint(0x1F130 + (code - 97));
             } else {
                 result += char;
@@ -308,20 +214,13 @@ function convertToUnicode(text, style) {
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
             const code = char.charCodeAt(0);
-            // Uppercase A-Z → Ａ-Ｚ (U+FF21 to U+FF3A)
             if (code >= 65 && code <= 90) {
                 result += String.fromCodePoint(0xFF21 + (code - 65));
-            }
-            // Lowercase a-z → ａ-ｚ (U+FF41 to U+FF5A)
-            else if (code >= 97 && code <= 122) {
+            } else if (code >= 97 && code <= 122) {
                 result += String.fromCodePoint(0xFF41 + (code - 97));
-            }
-            // Numbers 0-9 → ０-９ (U+FF10 to U+FF19)
-            else if (code >= 48 && code <= 57) {
+            } else if (code >= 48 && code <= 57) {
                 result += String.fromCodePoint(0xFF10 + (code - 48));
-            }
-            // Space → fullwidth space
-            else if (code === 32) {
+            } else if (code === 32) {
                 result += String.fromCodePoint(0x3000);
             } else {
                 result += char;
@@ -330,7 +229,7 @@ function convertToUnicode(text, style) {
         return result;
     }
 
-    // Special case for script text (has some exceptions)
+    // Special case for script text (has non-contiguous exceptions)
     if (style === 'script') {
         const scriptMap = {
             'A': '𝒜', 'B': '𝐵', 'C': '𝒞', 'D': '𝒟', 'E': '𝐸', 'F': '𝐹', 'G': '𝒢',
@@ -344,29 +243,24 @@ function convertToUnicode(text, style) {
         };
         let result = '';
         for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-            result += scriptMap[char] || char;
+            result += scriptMap[text[i]] || text[i];
         }
         return result;
     }
 
-    const range = unicodeRanges[style];
-    if (!range) return text;
+    const config = STYLE_CONFIGS[style];
+    if (!config) return text;
 
     // Handle combining characters (strikethrough, underline)
-    if (range.combiningChar) {
+    if (config.combiningChar) {
         let result = '';
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
-            // Don't add combining char to spaces or special chars
             if (char === ' ' || char === '\n' || char === '\r') {
                 result += char;
             } else {
-                // If character is already Unicode formatted, convert it back to plain ASCII first
-                // This prevents combining characters from being attached to Unicode characters
-                // which causes rendering issues (diamond-question-mark characters)
-                const plainChar = isUnicodeFormattedChar(char) ? unicodeToPlainChar(char) : char;
-                result += plainChar + range.combiningChar;
+                // Convert any existing Unicode format back to plain before adding combining char
+                result += unicodeToPlainChar(char) + config.combiningChar;
             }
         }
         return result;
@@ -378,232 +272,56 @@ function convertToUnicode(text, style) {
         const char = text[i];
         const code = char.charCodeAt(0);
 
-        // Uppercase A-Z (65-90)
-        if (code >= 65 && code <= 90 && range.uppercase) {
-            result += String.fromCodePoint(code - 65 + range.uppercase);
-        }
-        // Lowercase a-z (97-122)
-        else if (code >= 97 && code <= 122 && range.lowercase) {
-            result += String.fromCodePoint(code - 97 + range.lowercase);
-        }
-        // Numbers 0-9 (48-57)
-        else if (code >= 48 && code <= 57 && range.numbers) {
-            result += String.fromCodePoint(code - 48 + range.numbers);
+        if (code >= 65 && code <= 90 && config.uppercase) {
+            result += String.fromCodePoint(code - 65 + config.uppercase);
+        } else if (code >= 97 && code <= 122 && config.lowercase) {
+            result += String.fromCodePoint(code - 97 + config.lowercase);
+        } else if (code >= 48 && code <= 57 && config.numbers) {
+            result += String.fromCodePoint(code - 48 + config.numbers);
         } else {
-            result += char; // Keep original if no mapping
+            result += char;
         }
     }
     return result;
 }
 
-// Check if text is already formatted
+// Check if text is already formatted in the given style.
+// Uses codepoint math — works for ALL styles, not just legacy map styles.
 function isFormatted(text, style) {
-    const range = unicodeRanges[style];
-    if (!range) return false;
+    const config = STYLE_CONFIGS[style];
+    if (!config) return false;
 
     // Check for combining characters
-    if (range.combiningChar) {
-        return text.includes(range.combiningChar);
+    if (config.combiningChar) {
+        return text.includes(config.combiningChar);
     }
 
-    // Use reverse maps for O(1) lookup instead of O(n) Object.values().includes()
-    const reverseMap = style === 'bold' ? reverseBoldMap :
-                       style === 'italic' ? reverseItalicMap :
-                       style === 'boldItalic' ? reverseBoldItalicMap : null;
-
-    if (reverseMap) {
-        // Check if any character exists in reverse map (means it's formatted)
-        for (let i = 0; i < text.length; i++) {
-            if (reverseMap[text[i]]) {
-                return true;
-            }
-        }
-        return false;
+    // Check if any character falls in this style's Unicode ranges
+    for (const char of text) {
+        const cp = char.codePointAt(0);
+        if (config.uppercase && cp >= config.uppercase && cp < config.uppercase + 26) return true;
+        if (config.lowercase && cp >= config.lowercase && cp < config.lowercase + 26) return true;
+        if (config.numbers  && cp >= config.numbers  && cp < config.numbers + 10) return true;
     }
-
-    // Fallback: Check legacy maps for backward compatibility (shouldn't reach here for bold/italic/boldItalic)
-    const map = style === 'bold' ? boldMap :
-                 style === 'italic' ? italicMap :
-                 style === 'boldItalic' ? boldItalicMap : null;
-
-    if (map) {
-        // Last resort: check against map values (for styles without reverse maps)
-        for (let i = 0; i < text.length; i++) {
-            if (Object.values(map).includes(text[i])) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     return false;
 }
 
-// Remove Unicode formatting
-function removeFormatting(text, style) {
-    const range = unicodeRanges[style];
-    if (!range) return text;
-
-    // Remove combining characters using regex replace (more efficient than split/join)
-    if (range.combiningChar) {
-        // Escape the combining character for regex
-        const escaped = range.combiningChar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return text.replace(new RegExp(escaped, 'g'), '');
-    }
-
-    // Use reverse lookup maps for O(1) performance instead of O(n) indexOf
-    const reverseMap = style === 'bold' ? reverseBoldMap :
-                       style === 'italic' ? reverseItalicMap :
-                       style === 'boldItalic' ? reverseBoldItalicMap : null;
-
-    if (reverseMap) {
-        let result = '';
-        for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-            result += reverseMap[char] || char;
-        }
-        return result;
-    }
-
-    return text;
-}
-
-// Remove all Unicode formatting from text using the actual Unicode ranges
+// Remove all Unicode formatting from text, returning plain ASCII.
 function clearFormatting(text) {
     if (!text) return '';
 
     log('clearFormatting - processing text of length:', text?.length || 0);
 
-    // First, remove combining characters (strikethrough and underline)
-    // These need to be removed BEFORE processing individual characters
-    let result = text;
-    result = result.replace(/\u0336/g, ''); // Combining long stroke overlay (strikethrough)
-    result = result.replace(/\u0332/g, ''); // Combining low line (underline)
+    // Remove combining characters first (strikethrough & underline overlays)
+    let result = text.replace(/\u0336/g, '').replace(/\u0332/g, '');
 
-    // Now process each character to convert formatted text back to plain
-    // Use Array.from to properly handle Unicode characters (including surrogate pairs)
+    // Convert each formatted character back to plain ASCII via the centralized engine
     result = Array.from(result).map(char => {
-        // Skip whitespace characters - preserve them exactly
-        if (char === ' ' || char === '\n' || char === '\r' || char === '\t') {
-            return char;
-        }
-
-        // Use codePointAt to get the actual Unicode code point (handles surrogate pairs)
-        const codePoint = char.codePointAt(0);
-
-        // Bold (Sans-serif): U+1D5D4-U+1D607, U+1D7EC-U+1D7F5
-        if (codePoint >= 0x1D5D4 && codePoint <= 0x1D5ED) {
-            return String.fromCharCode(65 + (codePoint - 0x1D5D4)); // Bold uppercase A-Z
-        }
-        if (codePoint >= 0x1D5EE && codePoint <= 0x1D607) {
-            return String.fromCharCode(97 + (codePoint - 0x1D5EE)); // Bold lowercase a-z
-        }
-        if (codePoint >= 0x1D7EC && codePoint <= 0x1D7F5) {
-            return String.fromCharCode(48 + (codePoint - 0x1D7EC)); // Bold numbers 0-9
-        }
-
-        // Italic: U+1D608-U+1D63B
-        if (codePoint >= 0x1D608 && codePoint <= 0x1D621) {
-            return String.fromCharCode(65 + (codePoint - 0x1D608)); // Italic uppercase A-Z
-        }
-        if (codePoint >= 0x1D622 && codePoint <= 0x1D63B) {
-            return String.fromCharCode(97 + (codePoint - 0x1D622)); // Italic lowercase a-z
-        }
-
-        // Bold Italic: U+1D63C-U+1D66F
-        if (codePoint >= 0x1D63C && codePoint <= 0x1D655) {
-            return String.fromCharCode(65 + (codePoint - 0x1D63C)); // Bold Italic uppercase A-Z
-        }
-        if (codePoint >= 0x1D656 && codePoint <= 0x1D66F) {
-            return String.fromCharCode(97 + (codePoint - 0x1D656)); // Bold Italic lowercase a-z
-        }
-
-        // Monospace: U+1D670-U+1D6A3, U+1D7F6-U+1D7FF
-        if (codePoint >= 0x1D670 && codePoint <= 0x1D689) {
-            return String.fromCharCode(65 + (codePoint - 0x1D670)); // Monospace uppercase A-Z
-        }
-        if (codePoint >= 0x1D68A && codePoint <= 0x1D6A3) {
-            return String.fromCharCode(97 + (codePoint - 0x1D68A)); // Monospace lowercase a-z
-        }
-        if (codePoint >= 0x1D7F6 && codePoint <= 0x1D7FF) {
-            return String.fromCharCode(48 + (codePoint - 0x1D7F6)); // Monospace numbers 0-9
-        }
-
-        // Sans-serif: U+1D5A0-U+1D5B9, U+1D5BA-U+1D5D3, U+1D7E2-U+1D7EB
-        if (codePoint >= 0x1D5A0 && codePoint <= 0x1D5B9) {
-            return String.fromCharCode(65 + (codePoint - 0x1D5A0)); // Sans-serif uppercase A-Z
-        }
-        if (codePoint >= 0x1D5BA && codePoint <= 0x1D5D3) {
-            return String.fromCharCode(97 + (codePoint - 0x1D5BA)); // Sans-serif lowercase a-z
-        }
-        if (codePoint >= 0x1D7E2 && codePoint <= 0x1D7EB) {
-            return String.fromCharCode(48 + (codePoint - 0x1D7E2)); // Sans-serif numbers 0-9
-        }
-
-        // Script: U+1D49C-U+1D4CF (uppercase), U+1D4B6-U+1D4E9 (lowercase)
-        // Note: Script has some exceptions, but we'll handle the main ranges
-        if (codePoint >= 0x1D49C && codePoint <= 0x1D4CF) {
-            return String.fromCharCode(65 + (codePoint - 0x1D49C)); // Script uppercase A-Z
-        }
-        if (codePoint >= 0x1D4B6 && codePoint <= 0x1D4E9) {
-            return String.fromCharCode(97 + (codePoint - 0x1D4B6)); // Script lowercase a-z
-        }
-
-        // Circled: U+24B6-U+24CF (uppercase), U+24D0-U+24E9 (lowercase), U+24EA (0), U+2460-U+2468 (1-9)
-        if (codePoint >= 0x24B6 && codePoint <= 0x24CF) {
-            return String.fromCharCode(65 + (codePoint - 0x24B6)); // Circled uppercase A-Z
-        }
-        if (codePoint >= 0x24D0 && codePoint <= 0x24E9) {
-            return String.fromCharCode(97 + (codePoint - 0x24D0)); // Circled lowercase a-z
-        }
-        if (codePoint === 0x24EA) {
-            return '0'; // Circled 0
-        }
-        if (codePoint >= 0x2460 && codePoint <= 0x2468) {
-            return String.fromCharCode(49 + (codePoint - 0x2460)); // Circled 1-9
-        }
-
-        // Negative Circled: U+1F150-U+1F169 (uppercase and lowercase)
-        if (codePoint >= 0x1F150 && codePoint <= 0x1F169) {
-            // Both uppercase and lowercase map to the same range, convert to uppercase
-            const offset = codePoint - 0x1F150;
-            return String.fromCharCode(65 + offset); // Negative circled A-Z
-        }
-
-        // Squared: U+1F130-U+1F149 (uppercase and lowercase)
-        if (codePoint >= 0x1F130 && codePoint <= 0x1F149) {
-            // Both uppercase and lowercase map to the same range, convert to uppercase
-            const offset = codePoint - 0x1F130;
-            return String.fromCharCode(65 + offset); // Squared A-Z
-        }
-
-        // Fullwidth: U+FF21-U+FF3A (uppercase), U+FF41-U+FF5A (lowercase), U+FF10-U+FF19 (numbers), U+3000 (space)
-        if (codePoint >= 0xFF21 && codePoint <= 0xFF3A) {
-            return String.fromCharCode(65 + (codePoint - 0xFF21)); // Fullwidth uppercase A-Z
-        }
-        if (codePoint >= 0xFF41 && codePoint <= 0xFF5A) {
-            return String.fromCharCode(97 + (codePoint - 0xFF41)); // Fullwidth lowercase a-z
-        }
-        if (codePoint >= 0xFF10 && codePoint <= 0xFF19) {
-            return String.fromCharCode(48 + (codePoint - 0xFF10)); // Fullwidth numbers 0-9
-        }
-        if (codePoint === 0x3000) {
-            return ' '; // Fullwidth space → regular space
-        }
-
-        // Also check reverse legacy maps for backwards compatibility (O(1) lookup)
-        const reverseMaps = [reverseBoldMap, reverseItalicMap, reverseBoldItalicMap];
-        for (const reverseMap of reverseMaps) {
-            if (reverseMap[char]) {
-                return reverseMap[char];
-            }
-        }
-
-        // Not a formatted character, return as-is
-        return char;
+        if (char === ' ' || char === '\n' || char === '\r' || char === '\t') return char;
+        return unicodeToPlainChar(char);
     }).join('');
 
-    // Remove bullet points (but preserve spaces after them if any)
+    // Remove bullet points
     result = result.replace(/^•\s*/gm, '');
     result = result.replace(/●\s*/g, '');
     result = result.replace(/^→\s*/gm, '');
@@ -612,8 +330,6 @@ function clearFormatting(text) {
     result = result.replace(/^\d+[\.\)]\s+/gm, '');
 
     // Collapse consecutive newlines to single newlines
-    // Prevents extra blank lines when clearing formatting across <p> elements
-    // (selection.toString() can return \n\n between paragraphs)
     result = result.replace(/\n{2,}/g, '\n');
 
     log('clearFormatting - output text length:', result?.length || 0);
