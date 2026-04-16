@@ -700,9 +700,8 @@ function createFontDropdown() {
             e.preventDefault();
             e.stopPropagation();
 
-            // Only restore if selection was lost despite preventDefault
-            const selection = window.getSelection();
-            if (!selection.rangeCount && state.savedSelection) {
+            // Always restore selection to guarantee focus returns to the editor
+            if (state.savedSelection) {
                 restoreSelection();
             }
 
@@ -771,9 +770,8 @@ function createListDropdown() {
             e.preventDefault();
             e.stopPropagation();
             
-            // Only restore if selection was lost
-            const selection = window.getSelection();
-            if (!selection.rangeCount && state.savedSelection) {
+            // Always restore selection to guarantee focus returns to the editor
+            if (state.savedSelection) {
                 restoreSelection();
             }
             
@@ -924,9 +922,8 @@ function createFormattingButtons() {
                 e.stopPropagation();
                 log(`Button clicked: ${button.action}`);
                 
-                // If selection was lost despite preventDefault, restore it
-                const selection = window.getSelection();
-                if (!selection.rangeCount && state.savedSelection) {
+                // If selection was lost, restore it
+                if (state.savedSelection) {
                     restoreSelection();
                 }
                 
@@ -992,7 +989,7 @@ function formatText(action) {
         }
 
         // For non-bullet actions, we need selected text
-        if (selectedText.length === 0 && action !== 'bullet' && action !== 'arrow') {
+        if (selectedText.length === 0 && action !== 'bullet' && action !== 'arrow' && action !== 'numbered') {
             log('No text selected for formatting');
             return;
         }
@@ -1046,14 +1043,12 @@ function formatText(action) {
         }
 
         // === TEXT REPLACEMENT ===
-        const rangeHasContent = range.toString().length > 0;
-        log(`Range has content: ${rangeHasContent}, formattedText length: ${formattedText.length}`);
+        const rangeHasContent = range ? range.toString().length > 0 : false;
+        log(`Range has content: ${rangeHasContent}, formattedText length: ${formattedText?.length || 0}`);
 
         const editorEl = state.currentEditor || document.activeElement;
         
         // Ensure the editor has focus before we try to manipulate content.
-        // We only call focus() if it's not the active element to prevent destroying
-        // the active caret/selection position unnecessarily.
         if (editorEl && editorEl.isContentEditable && document.activeElement !== editorEl) {
             editorEl.focus();
             // Restore the specific selection if we changed focus
@@ -1064,11 +1059,41 @@ function formatText(action) {
             }
         }
 
-        if (rangeHasContent) {
-            // PRIMARY PATH: Range-based replacement (works perfectly for Comments)
-            // By inserting a DocumentFragment/TextNode, we preserve precise formatting 
-            // and newlines via white-space: pre-wrap CSS used by LinkedIn.
-            log('Using range-based replacement');
+        let insertSuccess = false;
+        
+        // PRIMARY PATH: document.execCommand
+        // We MUST use execCommand whenever possible because it correctly triggers 
+        // internal React/Draft.js events that LinkedIn relies on to track state.
+        // Direct DOM manipulation (range.insertNode) works visually but gets reverted by LinkedIn.
+        const lines = formattedText.split('\n');
+        const isMultiline = lines.length > 1;
+
+        if (isMultiline) {
+            log('Multi-line primary path: inserting line by line');
+            // Try atomic replacement first for multiline if possible
+            const deleted = document.execCommand('delete', false, null);
+            if (deleted) {
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].length > 0) {
+                        document.execCommand('insertText', false, lines[i]);
+                    }
+                    if (i < lines.length - 1) {
+                        document.execCommand('insertParagraph', false, null);
+                    }
+                }
+                insertSuccess = true;
+            }
+        }
+
+        if (!insertSuccess) {
+            insertSuccess = document.execCommand('insertText', false, formattedText);
+            log(`execCommand insertText result: ${insertSuccess}`);
+        }
+
+        if (!insertSuccess && rangeHasContent) {
+            // FALLBACK PATH: Range-based replacement 
+            // Fallback for when execCommand fails (e.g. certain comment field scenarios)
+            log('Using range-based replacement as fallback');
             range.deleteContents();
             const textNode = document.createTextNode(formattedText);
             range.insertNode(textNode);
@@ -1079,49 +1104,21 @@ function formatText(action) {
             newRange.collapse(true);
             selection.removeAllRanges();
             selection.addRange(newRange);
-        } else {
-            // FALLBACK PATH: (Handles LinkedIn's main post modal where range is empty)
-            log('Using fallback replacement (execCommand + synthetic events)');
-            let insertSuccess = false;
-            
-            const lines = formattedText.split('\n');
-            const isMultiline = lines.length > 1;
-
-            if (isMultiline) {
-                log('Multi-line fallback: inserting line by line');
-                const deleted = document.execCommand('delete', false, null);
-                log(`execCommand delete result: ${deleted}`);
-                
-                if (deleted) {
-                    for (let i = 0; i < lines.length; i++) {
-                        if (lines[i].length > 0) {
-                            document.execCommand('insertText', false, lines[i]);
-                        }
-                        if (i < lines.length - 1) {
-                            document.execCommand('insertParagraph', false, null);
-                        }
-                    }
-                    insertSuccess = true;
-                }
-            }
-
-            if (!insertSuccess) {
-                insertSuccess = document.execCommand('insertText', false, formattedText);
-                log(`execCommand insertText result: ${insertSuccess}`);
-            }
-
-            if (!insertSuccess && editorEl && editorEl.isContentEditable) {
-                // LAST RESORT: synthetic input events
-                log('Using synthetic input events as last resort');
-                editorEl.dispatchEvent(new InputEvent('beforeinput', {
-                    bubbles: true, cancelable: true,
-                    inputType: 'insertText', data: formattedText
-                }));
-                editorEl.dispatchEvent(new InputEvent('input', {
-                    bubbles: true, cancelable: false,
-                    inputType: 'insertText', data: formattedText
-                }));
-            }
+            insertSuccess = true;
+        } 
+        
+        if (!insertSuccess && editorEl && editorEl.isContentEditable) {
+            // LAST RESORT: synthetic input events
+            log('Using synthetic input events as last resort');
+            editorEl.dispatchEvent(new InputEvent('beforeinput', {
+                bubbles: true, cancelable: true,
+                inputType: 'insertText', data: formattedText
+            }));
+            editorEl.dispatchEvent(new InputEvent('input', {
+                bubbles: true, cancelable: false,
+                inputType: 'insertText', data: formattedText
+            }));
+            insertSuccess = true;
         }
 
         // Trigger change events for LinkedIn compatibility
