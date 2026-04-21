@@ -34,6 +34,7 @@ A Chrome extension that adds powerful text formatting capabilities to LinkedIn's
 
 ### Lists
 - **Bullet Lists** - Add professional bullet points to multiple lines
+- **Arrow Lists** - Create arrow-style lists (→)
 - **Numbered Lists** - Create ordered lists (1., 2., 3.)
 - One-click formatting for multi-line selections
 
@@ -174,7 +175,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Initial release
 - Text formatting (bold, italic, bold italic, strikethrough, underline)
 - Font styles (7 options: Sans-serif, Script, Circled, Negative Circled, Squared, Fullwidth, Monospace)
-- Bullet and numbered lists
+- Bullet, arrow, and numbered lists
 - Clear formatting (removes all formatting)
 - Keyboard shortcuts (Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+S)
 - Welcome notification on first install
