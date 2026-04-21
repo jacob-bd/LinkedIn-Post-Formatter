@@ -368,9 +368,7 @@ function createFontDropdown() {
         { text: '🅝🅔🅖🅐🅣🅘🅥🅔', action: 'negativeCircled', label: 'Negative Circled' },
         { text: '🅂🅀🅄🄰🅁🄴🄳', action: 'squared', label: 'Squared' },
         { text: 'Ｆｕｌｌｗｉｄｔｈ', action: 'fullwidth', label: 'Fullwidth' },
-        { text: '𝙼𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎', action: 'monospace', label: 'Monospace' },
-        { text: 'AAA', action: 'uppercase', label: 'UPPERCASE' },
-        { text: 'aaa', action: 'lowercase', label: 'lowercase' }
+        { text: '𝙼𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎', action: 'monospace', label: 'Monospace' }
     ];
 
     fontOptions.forEach(option => {
@@ -406,6 +404,71 @@ function createFontDropdown() {
             trackUsage(option.action);
 
             // Close the dropdown
+            dropdown.style.display = 'none';
+        };
+
+        dropdown.appendChild(item);
+    });
+
+    return dropdown;
+}
+
+// Create capitalization dropdown menu
+function createCaseDropdown() {
+    const dropdown = document.createElement('div');
+    dropdown.className = 'linkedin-formatter-case-dropdown';
+    dropdown.style.cssText = `
+        display: none;
+        position: absolute;
+        bottom: 45px;
+        left: 0;
+        background: white;
+        border: 1px solid rgba(0,0,0,0.15);
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        padding: 8px 0;
+        z-index: 1000;
+        min-width: 180px;
+    `;
+
+    dropdown.onmousedown = (e) => {
+        e.preventDefault();
+    };
+
+    const caseOptions = [
+        { text: 'AAA', action: 'uppercase', label: 'UPPERCASE' },
+        { text: 'aaa', action: 'lowercase', label: 'lowercase' },
+        { text: 'Aa', action: 'titleCase', label: 'Title Case' }
+    ];
+
+    caseOptions.forEach(option => {
+        const item = document.createElement('div');
+        item.className = 'case-option';
+        item.textContent = option.text;
+        item.title = option.label;
+        item.style.cssText = `
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        `;
+
+        item.onmouseenter = () => {
+            item.style.backgroundColor = 'rgba(0,0,0,0.08)';
+        };
+        item.onmouseleave = () => {
+            item.style.backgroundColor = 'transparent';
+        };
+
+        item.onmousedown = (e) => {
+            e.preventDefault();
+        };
+
+        item.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            formatText(option.action);
+            trackUsage(option.action);
             dropdown.style.display = 'none';
         };
 
@@ -507,7 +570,8 @@ function createFormattingButtons() {
         { text: 'B/I', action: 'boldItalic', title: 'Bold Italic' },
         { text: 'S̶', action: 'strikethrough', title: `Strikethrough (${modifierKey}+S)` },
         { text: 'U̲', action: 'underline', title: `Underline (${modifierKey}+U)` },
-        { text: 'Aa', action: 'font-dropdown', title: 'Font Style', isDropdown: true },
+        { text: 'Aa', action: 'case-dropdown', title: 'Change Case', isDropdown: true },
+        { text: 'Ff', action: 'font-dropdown', title: 'Font Style', isDropdown: true },
         { text: '•', action: 'list-dropdown', title: 'List Style', isDropdown: true },
         { text: '✕', action: 'clear', title: 'Clear Formatting' }
     ];
@@ -529,9 +593,17 @@ function createFormattingButtons() {
                     <line x1="6" y1="14" x2="16" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                 </svg>
             `;
-        } else if (button.action === 'font-dropdown') {
-            // Font style selector - Text Aa
+        } else if (button.action === 'case-dropdown') {
+            // Change case selector - Aa
             btn.textContent = 'Aa';
+        } else if (button.action === 'font-dropdown') {
+            // Font style selector - typography A icon
+            btn.innerHTML = `
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <text x="10" y="14" text-anchor="middle" font-size="14" font-weight="bold" font-family="serif" fill="currentColor">A</text>
+                    <line x1="3" y1="17" x2="17" y2="17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+            `;
         } else if (button.action === 'clear') {
             // Clear formatting - T with diagonal slash
             btn.innerHTML = `
@@ -581,7 +653,9 @@ function createFormattingButtons() {
         // Handle dropdown button specially
         if (button.isDropdown) {
             let dropdown;
-            if (button.action === 'font-dropdown') {
+            if (button.action === 'case-dropdown') {
+                dropdown = createCaseDropdown();
+            } else if (button.action === 'font-dropdown') {
                 dropdown = createFontDropdown();
             } else if (button.action === 'list-dropdown') {
                 dropdown = createListDropdown();
@@ -594,7 +668,7 @@ function createFormattingButtons() {
                 log(`Dropdown button clicked: ${button.action}`);
 
                 // Close any other open dropdowns in the toolbar
-                container.querySelectorAll('.linkedin-formatter-font-dropdown, .linkedin-formatter-list-dropdown').forEach(d => {
+                container.querySelectorAll('.linkedin-formatter-case-dropdown, .linkedin-formatter-font-dropdown, .linkedin-formatter-list-dropdown').forEach(d => {
                     if (d !== dropdown) d.style.display = 'none';
                 });
 
@@ -717,6 +791,10 @@ function formatText(action) {
             formattedText = clearFormatting(selectedText).toUpperCase();
         } else if (action === 'lowercase') {
             formattedText = clearFormatting(selectedText).toLowerCase();
+        } else if (action === 'titleCase') {
+            formattedText = clearFormatting(selectedText)
+                .toLowerCase()
+                .replace(/(?:^|\s)\S/g, char => char.toUpperCase());
 
         // === CLEAR FORMATTING ===
         } else if (action === 'clear') {
@@ -1335,7 +1413,7 @@ const ALLOWED_ACTIONS = [
     'bold', 'italic', 'boldItalic', 'strikethrough', 'underline',
     'monospace', 'sansSerif', 'script', 'circled', 'negativeCircled',
     'squared', 'fullwidth', 'bullet', 'arrow', 'numbered',
-    'uppercase', 'lowercase', 'clear'
+    'uppercase', 'lowercase', 'titleCase', 'clear'
 ];
 
 // Message listener for extension communication
