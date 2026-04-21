@@ -1101,23 +1101,16 @@ function findLinkedInToolbar(editor) {
     // Use getRootNode() to search the entire shadow root (or document)
     // This handles the new shadow DOM structure flawlessly.
     const rootSearchTarget = editor.getRootNode();
-    
-    let localSearchContainer = editor;
-    for (let i = 0; i < 15; i++) {
-        if (localSearchContainer.parentElement) {
-            localSearchContainer = localSearchContainer.parentElement;
-        }
-    }
 
-    log('Looking for emoji button');
+    log('Looking for toolbar buttons (local-first search)');
 
     // Prioritize bottom toolbar buttons (Schedule/Clock) so the formatter appears at the very bottom
     // Fall back to media/emoji for comments which don't have a schedule button
     const targetSelectors = [
-        // 1. Bottom row with Post button
+        // 1. Bottom row with Post button (modal post creation)
         'button[aria-label*="schedule" i]',
         'button[aria-label*="Schedule" i]',
-        // 2. Middle row / Comment toolbars
+        // 2. Comment/Reply toolbars — emoji and photo buttons
         'button[aria-label*="photo" i]',
         'button[aria-label*="image" i]',
         'button[aria-label*="Add a" i]',
@@ -1129,16 +1122,94 @@ function findLinkedInToolbar(editor) {
         'button[aria-label*="Insert an emoji" i]'
     ];
 
+    // === LOCAL-FIRST SEARCH using stable LinkedIn DOM anchors ===
+    // LinkedIn's new TipTap/ProseMirror DOM has NO <form> elements and uses
+    // hashed CSS class names (e.g. "_87db4414"). We use data-testid attributes
+    // and ARIA roles which are stable across LinkedIn deployments.
+    //
+    // DOM hierarchy per comment/reply editor:
+    //   editor (role="textbox", contenteditable)
+    //     └─ parent: wrapper div
+    //       └─ [data-testid="ui-core-tiptap-text-editor-wrapper"] (level 1)
+    //         └─ parent (level 2)
+    //           └─ [data-display-contents] (level 3)
+    //             └─ comment-scope (level 4) ← contains editor + emoji + photo
+    //
+    // For feed posts, each post is a [role="listitem"] in the feed list.
+
+    const localScopes = [];
+
+    // Strategy 1: TipTap wrapper + walk up to the comment-scope container
+    // This is the tightest reliable scope: contains exactly 1 editor, 1 emoji, 1 photo
+    const tiptapWrapper = editor.closest('[data-testid="ui-core-tiptap-text-editor-wrapper"]');
+    if (tiptapWrapper) {
+        let commentScope = tiptapWrapper;
+        // Walk up 3 parent levels to reach the container holding emoji/photo buttons
+        for (let i = 0; i < 3; i++) {
+            if (commentScope.parentElement) {
+                commentScope = commentScope.parentElement;
+            }
+        }
+        localScopes.push(commentScope);
+        // Also store this scope on the editor for use during insertion
+        editor._commentScope = commentScope;
+    }
+
+    // Strategy 2: Per-post boundary (each feed post is a listitem)
+    const listItem = editor.closest('[role="listitem"]');
+    if (listItem) {
+        localScopes.push(listItem);
+    }
+
+    // Strategy 3: Legacy fallbacks for older LinkedIn layouts
+    const formScope = editor.closest('form');
+    if (formScope) localScopes.push(formScope);
+
+    // Strategy 4: Dialog/modal scope for post creation
+    const dialogScope = editor.closest('[role="dialog"]');
+    if (dialogScope) localScopes.push(dialogScope);
+
+    // Strategy 5: Last resort — walk up 15 parents (broad but covers edge cases)
+    let broadContainer = editor;
+    for (let i = 0; i < 15; i++) {
+        if (broadContainer.parentElement) {
+            broadContainer = broadContainer.parentElement;
+        }
+    }
+    localScopes.push(broadContainer);
+
     let foundButton = null;
     let selectorUsed = '';
-    for (const selector of targetSelectors) {
-        // Try shadow root first, then fallback to local container
-        foundButton = (rootSearchTarget.querySelector && rootSearchTarget.querySelector(selector)) || localSearchContainer.querySelector(selector);
-        if (foundButton) {
-            log(`Found native toolbar button with selector: ${selector}`);
-            selectorUsed = selector;
-            break;
+    let scopeUsed = '';
+
+    // Try each scope from tightest to broadest
+    for (const scope of localScopes) {
+        for (const selector of targetSelectors) {
+            foundButton = scope.querySelector(selector);
+            if (foundButton) {
+                selectorUsed = selector;
+                scopeUsed = scope.getAttribute('data-testid') || scope.getAttribute('role') || scope.tagName || 'unknown';
+                break;
+            }
         }
+        if (foundButton) break;
+    }
+
+    // Fall back to root/document search only if all local scopes found nothing
+    if (!foundButton) {
+        log('Local search found nothing, falling back to root search');
+        for (const selector of targetSelectors) {
+            foundButton = (rootSearchTarget.querySelector && rootSearchTarget.querySelector(selector)) || broadContainer.querySelector(selector);
+            if (foundButton) {
+                selectorUsed = selector;
+                scopeUsed = 'root';
+                break;
+            }
+        }
+    }
+
+    if (foundButton) {
+        log(`Found native toolbar button with selector: ${selectorUsed} (scope: ${scopeUsed})`);
     }
 
     if (foundButton) {
@@ -1238,22 +1309,32 @@ function attachFormatter(editor) {
             toolbar.insertBefore(formattingButtons, toolbar.firstChild);
         }
     } else {
-        // Comment toolbars / standard injection
-        // Instead of injecting inside the small pill (which squishes the input), 
-        // we append it below the form or the closest macro-wrapper.
-        const formWrapper = editor.closest('form') || editor.closest('.comments-comment-box') || toolbar.parentElement.parentElement;
+        // Comment/Reply toolbars — insert BELOW the editor's comment-scope
+        // LinkedIn's TipTap DOM uses data-testid attributes, not forms.
+        // The comment-scope container (set in findLinkedInToolbar) holds the
+        // editor + emoji/photo buttons in an internal flex layout.
+        // We must insert AFTER it (not inside) to avoid breaking the flex layout.
+        const commentScope = editor._commentScope;
         
-        formattingButtons.style.setProperty('margin-top', '8px', 'important');
-        formattingButtons.style.setProperty('margin-bottom', '8px', 'important');
+        formattingButtons.style.setProperty('margin-top', '4px', 'important');
+        formattingButtons.style.setProperty('margin-bottom', '4px', 'important');
         formattingButtons.style.setProperty('width', '100%', 'important');
         formattingButtons.style.setProperty('justify-content', 'flex-start', 'important');
         
-        if (formWrapper && formWrapper.parentElement) {
-            // Append right after the form wrapper
-            formWrapper.insertAdjacentElement('afterend', formattingButtons);
+        if (commentScope && commentScope.parentElement) {
+            // Insert AFTER the comment-scope container — below the editor + emoji row
+            // This keeps the bar outside the internal flex layout that holds the editor
+            commentScope.insertAdjacentElement('afterend', formattingButtons);
+            log(`✅ Inserted bar after comment-scope container`);
         } else {
-            // Fallback
-            toolbar.appendChild(formattingButtons);
+            // Last resort fallback
+            const legacyWrapper = editor.closest('form') || editor.closest('.comments-comment-box') || toolbar.parentElement.parentElement;
+            if (legacyWrapper && legacyWrapper.parentElement) {
+                legacyWrapper.insertAdjacentElement('afterend', formattingButtons);
+            } else {
+                toolbar.appendChild(formattingButtons);
+            }
+            log(`⚠️ Used legacy fallback for bar insertion`);
         }
     }
 
@@ -1286,7 +1367,7 @@ function attachFormatter(editor) {
 
     const observerTarget = isModalEditor 
         ? (editor.closest('[role="dialog"], .share-box, .share-creation-state') || document.body)
-        : (editor.closest('form, [class*="comment"]') || document.body);
+        : (editor._commentScope || editor.closest('[role="listitem"]') || editor.closest('form') || document.body);
         
     removalObserver.observe(observerTarget, { childList: true, subtree: true });
 
@@ -1300,10 +1381,14 @@ function attachFormatter(editor) {
 // Scan for editors and attach formatters
 function scanForEditors() {
     log('Scanning for post editors...');
-    const editor = findPostEditor();
-
-    if (editor && !state.editors.has(editor)) {
+    // Process ALL new editors found, not just one per scan cycle.
+    // This ensures scrolling to new posts or opening replies catches everything.
+    let editor = findPostEditor();
+    let count = 0;
+    while (editor && !state.editors.has(editor) && count < 10) {
         attachFormatter(editor);
+        count++;
+        editor = findPostEditor();
     }
 }
 
@@ -1434,6 +1519,13 @@ function init() {
     log('LinkedIn Formatter - Enhanced Version initializing...');
 
     try {
+        // Clean up stale formatting buttons from previous extension loads/reloads.
+        // LinkedIn's React doesn't remove them, so they persist as orphaned elements.
+        document.querySelectorAll('.linkedin-formatter-buttons').forEach(el => {
+            log('Cleaning up stale formatting buttons');
+            el.remove();
+        });
+
         injectToolbarStyles();
         setupObservers();
         setupKeyboardShortcuts();
