@@ -27,6 +27,11 @@ A Chrome extension that adds powerful text formatting capabilities to LinkedIn's
 - **Fullwidth** - Asian-style wide spacing (Ａ ｂ ｃ)
 - **Monospace** - Typewriter style (𝙰 𝚋 𝚌)
 
+### Text Case (3 Options)
+- **UPPERCASE** - Convert selected text to all caps
+- **lowercase** - Convert selected text to all lowercase
+- **Title Case** - Capitalize the first letter of every word
+
 ### Lists
 - **Bullet Lists** - Add professional bullet points to multiple lines
 - **Numbered Lists** - Create ordered lists (1., 2., 3.)
@@ -155,6 +160,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Questions**: Open a discussion on GitHub
 
 ## 🔄 Changelog
+
+### Version 1.1.0
+- Separated font styles and text case into two distinct toolbar buttons for a cleaner UI
+- Added new **Title Case** option (capitalizes the first letter of every word)
+- Text case options (UPPERCASE, lowercase, Title Case) now live under the `Aa` button
+- Font styles now have their own dedicated button with a typography icon
+
+### Version 1.0.1
+- Fixed extra blank lines appearing when formatting multiline text
 
 ### Version 1.0.0
 - Initial release
