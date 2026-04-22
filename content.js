@@ -1310,31 +1310,35 @@ function attachFormatter(editor) {
         }
     } else {
         // Comment/Reply toolbars — insert BELOW the editor's comment-scope
-        // LinkedIn's TipTap DOM uses data-testid attributes, not forms.
-        // The comment-scope container (set in findLinkedInToolbar) holds the
-        // editor + emoji/photo buttons in an internal flex layout.
-        // We must insert AFTER it (not inside) to avoid breaking the flex layout.
         const commentScope = editor._commentScope;
-        
+
         formattingButtons.style.setProperty('margin-top', '4px', 'important');
         formattingButtons.style.setProperty('margin-bottom', '4px', 'important');
         formattingButtons.style.setProperty('width', '100%', 'important');
         formattingButtons.style.setProperty('justify-content', 'flex-start', 'important');
-        
-        if (commentScope && commentScope.parentElement) {
-            // Insert AFTER the comment-scope container — below the editor + emoji row
-            // This keeps the bar outside the internal flex layout that holds the editor
-            commentScope.insertAdjacentElement('afterend', formattingButtons);
-            log(`✅ Inserted bar after comment-scope container`);
-        } else {
-            // Last resort fallback
-            const legacyWrapper = editor.closest('form') || editor.closest('.comments-comment-box') || toolbar.parentElement.parentElement;
-            if (legacyWrapper && legacyWrapper.parentElement) {
-                legacyWrapper.insertAdjacentElement('afterend', formattingButtons);
-            } else {
-                toolbar.appendChild(formattingButtons);
+
+        let insertTarget = commentScope;
+        if (!insertTarget || !insertTarget.parentElement) {
+            insertTarget = editor.closest('form') || editor.closest('.comments-comment-box') || toolbar.parentElement?.parentElement;
+        }
+
+        if (insertTarget && insertTarget.parentElement) {
+            // Walk up if the parent is a horizontal flex container.
+            // On post detail pages the form sits inside a flex-direction:row parent;
+            // inserting our full-width bar there crushes the editor to zero width.
+            const boundary = editor.closest('[role="listitem"], [role="dialog"]') || document.body;
+            let steps = 0;
+            while (insertTarget.parentElement && insertTarget.parentElement !== boundary && steps < 5) {
+                const ps = window.getComputedStyle(insertTarget.parentElement);
+                if (!ps.display.includes('flex') || ps.flexDirection.startsWith('column')) break;
+                insertTarget = insertTarget.parentElement;
+                steps++;
             }
-            log(`⚠️ Used legacy fallback for bar insertion`);
+            insertTarget.insertAdjacentElement('afterend', formattingButtons);
+            log(`✅ Inserted bar after container (walked ${steps} levels to vertical flow)`);
+        } else {
+            toolbar.appendChild(formattingButtons);
+            log(`⚠️ Used toolbar append fallback for bar insertion`);
         }
     }
 
