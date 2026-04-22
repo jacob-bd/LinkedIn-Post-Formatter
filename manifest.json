@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Posts & Comments Formatter",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Advanced text formatting for LinkedIn posts with Unicode styling (bold, italic, bullets) and keyboard shortcuts",
   "permissions": ["storage", "activeTab", "notifications"],
   "host_permissions": [

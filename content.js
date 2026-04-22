@@ -743,6 +743,26 @@ function formatText(action) {
         let selectedText = range.toString();
         const rangeIsEmpty = selectedText.length === 0;
 
+        // range.toString() concatenates text across block boundaries without
+        // newlines, so "line1\nline2" becomes "line1line2". Re-extract with
+        // line breaks when the selection spans block-level elements.
+        if (!rangeIsEmpty && range.startContainer !== range.endContainer) {
+            const frag = range.cloneContents();
+            const tmp = document.createElement('div');
+            tmp.appendChild(frag);
+            if (tmp.querySelector('p, div, br')) {
+                let html = tmp.innerHTML
+                    .replace(/<br\s*\/?>/gi, '\n')
+                    .replace(/<\/p>/gi, '\n')
+                    .replace(/<\/div>/gi, '\n')
+                    .replace(/<[^>]+>/g, '')
+                    .replace(/\n+$/, '');
+                const dec = document.createElement('textarea');
+                dec.innerHTML = html;
+                selectedText = dec.value;
+            }
+        }
+
         // If the range is empty, try to get text from the global selection
         // (LinkedIn's main post modal has a bug where range is empty but selection exists)
         if (rangeIsEmpty && selection.toString().length > 0) {

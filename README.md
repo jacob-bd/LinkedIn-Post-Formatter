@@ -162,6 +162,16 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🔄 Changelog
 
+### Version 1.3.1
+- Fixed multi-line formatting (clear, bold, etc.) merging lines into one
+
+### Version 1.3.0
+- Fixed comment editor being crushed to zero width on post detail pages
+
+### Version 1.2.0
+- Updated toolbar injection to support LinkedIn's new TipTap/ProseMirror editor
+- Improved comment and reply detection across feed, post detail, and modal contexts
+
 ### Version 1.1.0
 - Separated font styles and text case into two distinct toolbar buttons for a cleaner UI
 - Added new **Title Case** option (capitalizes the first letter of every word)
