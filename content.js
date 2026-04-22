@@ -1354,6 +1354,14 @@ function attachFormatter(editor) {
                 insertTarget = insertTarget.parentElement;
                 steps++;
             }
+
+            // Prevent duplicate toolbars (broad [contenteditable] selector can
+            // match wrapper elements around the same visual editor)
+            if (insertTarget.parentElement.querySelector(':scope > .linkedin-formatter-buttons')) {
+                log('⚠️ Formatting buttons already exist at this level, skipping');
+                return;
+            }
+
             insertTarget.insertAdjacentElement('afterend', formattingButtons);
             log(`✅ Inserted bar after container (walked ${steps} levels to vertical flow)`);
         } else {

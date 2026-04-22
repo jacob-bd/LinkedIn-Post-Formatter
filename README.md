@@ -162,7 +162,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🔄 Changelog
 
-### Version 1.3.1
+### Version 1.3.2
+- Fixed duplicate formatting toolbar appearing on reply boxes
 - Fixed multi-line formatting (clear, bold, etc.) merging lines into one
 
 ### Version 1.3.0
