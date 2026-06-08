@@ -1,4 +1,6 @@
 # LinkedIn Posts & Comments Formatter
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacobbd)
 <img width="1280" height="800" alt="Main" src="https://github.com/user-attachments/assets/d4095738-99a6-4a80-a502-b901f9c6ea48" />
 
 A Chrome extension that adds powerful text formatting capabilities to LinkedIn's post editor, allowing you to create beautifully formatted posts with Unicode styling, bullets, and numbered lists.
